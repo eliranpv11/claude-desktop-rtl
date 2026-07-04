@@ -1,0 +1,98 @@
+/* -------------------------------------------------------------------------
+   apply.css — the declarative core of the RTL fix (~85% of the work)
+
+   Strategy: set base direction at the LEAF-BLOCK level with
+   `unicode-bidi: plaintext`, which runs the browser's own first-strong per
+   block on that block's own content — immune to any ancestor's direction. So
+   an English paragraph stays LTR and a Hebrew paragraph flips RTL inside the
+   same document, with NO global container flip.
+
+   `:where()` keeps specificity at 0 so we don't fight Claude's styles unless we
+   mean to; `!important` is used only where Claude hard-sets direction/text-align
+   inline and we must win.
+   ------------------------------------------------------------------------- */
+
+/* Per-leaf base direction + logical alignment. */
+:where(.standard-markdown, .font-claude-response, .font-claude-message, [data-testid="user-message"], .prose, [data-rtl-artifact])
+  :is(p, li, h1, h2, h3, h4, h5, h6, blockquote, dt, dd, figcaption, caption, td, th) {
+  unicode-bidi: plaintext !important;
+  text-align: start !important;
+}
+
+/* Long unbreakable LTR tokens (URLs) inside RTL must not blow out the bubble. */
+:where(.standard-markdown, .font-claude-response, .font-claude-message, .prose)
+  :is(p, li) {
+  overflow-wrap: anywhere;
+}
+
+/* Code & rendered math NEVER reorder; isolate so neighbours can't bleed in. */
+pre,
+.code-block__code {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+  text-align: left !important;
+}
+code {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.katex,
+.katex-display,
+mjx-container,
+.MathJax,
+math {
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+}
+
+/* A fence that is really Hebrew prose (tagged by JS): read it per-line RTL. */
+pre[data-rtl-text],
+pre[data-rtl-text] code {
+  unicode-bidi: plaintext !important;
+  direction: unset !important;
+  text-align: start !important;
+}
+
+/* Explicit dir wins; tables flip column order via dir on the <table>. */
+[dir='rtl'] {
+  direction: rtl;
+}
+[dir='ltr'] {
+  direction: ltr;
+}
+table[dir='rtl'] {
+  direction: rtl !important;
+}
+
+/* Per-column alignment (Layer 2b): each column hugs its own language's edge. */
+:is(td, th)[data-rtl-col='rtl'] {
+  text-align: right !important;
+}
+:is(td, th)[data-rtl-col='ltr'] {
+  text-align: left !important;
+}
+
+/* JS-created islands: isolate so neutrals don't leak across them. */
+[data-rtl-relation] {
+  unicode-bidi: isolate !important;
+  direction: ltr !important;
+}
+[data-rtl-num] {
+  unicode-bidi: isolate;
+}
+
+/* Arrow visual flip — glyph only, the code point is untouched (copy stays exact). */
+[data-rtl-arrow] {
+  display: inline-block;
+  transform: scaleX(-1);
+}
+
+/* RTL list markers/indent hang on the content (right) side. */
+[dir='rtl'] > :is(ul, ol),
+:is(ul, ol)[dir='rtl'] {
+  padding-right: 1.5em;
+  padding-left: 0;
+}
+li[dir='rtl'] {
+  list-style-position: inside;
+}
