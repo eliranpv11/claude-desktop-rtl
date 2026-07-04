@@ -1,35 +1,72 @@
-<svg width="1000" height="280" viewBox="0 0 1000 280" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+<svg width="1200" height="320" viewBox="0 0 1200 320" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1000" y2="280" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#15131b"/>
-      <stop offset="1" stop-color="#0d0b12"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1a1620"/>
+      <stop offset="0.55" stop-color="#13111a"/>
+      <stop offset="1" stop-color="#0b0a10"/>
     </linearGradient>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
       <stop stop-color="#d97757"/>
-      <stop offset="1" stop-color="#e0a08a"/>
+      <stop offset="1" stop-color="#f0b48f"/>
     </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#d97757" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#d97757" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="bubbleHe" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#3a2f42"/>
+      <stop offset="1" stop-color="#332a3d"/>
+    </linearGradient>
+    <linearGradient id="bubbleEn" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#2a2420"/>
+      <stop offset="1" stop-color="#251f1c"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <radialGradient id="dotGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop stop-color="#d97757" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#d97757" stop-opacity="0"/>
+    </radialGradient>
   </defs>
 
-  <rect width="1000" height="280" rx="20" fill="url(#bg)"/>
+  <rect width="1200" height="320" rx="24" fill="url(#bg)"/>
+  <rect width="1200" height="320" rx="24" fill="url(#glow)"/>
 
-  <!-- Title -->
-  <text x="48" y="62" fill="#f4efe9" font-size="30" font-weight="700">Claude Desktop <tspan fill="url(#accent)">RTL</tspan></text>
-  <text x="48" y="90" fill="#8a8580" font-size="15" font-weight="400">Right-to-left for Hebrew · Arabic · Persian — done per block, done right</text>
+  <!-- subtle background grid dots -->
+  <g opacity="0.5">
+    <circle cx="1120" cy="46" r="90" fill="url(#dotGlow)"/>
+  </g>
+
+  <!-- Wordmark row -->
+  <g transform="translate(56,44)">
+    <!-- glyph mark: a bidi arrow motif -->
+    <rect x="0" y="-26" width="44" height="44" rx="12" fill="#241f2b" stroke="#3a3244" stroke-width="1"/>
+    <path d="M10 -4 L26 -4 M22 -9 L27 -4 L22 1" stroke="url(#accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M34 4 L18 4 M22 -1 L17 4 L22 9" stroke="#8f8a94" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+    <text x="60" y="8" fill="#f5f0ea" font-size="34" font-weight="700">Claude Desktop <tspan fill="url(#accent)">RTL</tspan></text>
+  </g>
+  <text x="56" y="94" fill="#8f8a94" font-size="16" font-weight="400">Right-to-left for Hebrew · Arabic · Persian — one block at a time, done right</text>
 
   <!-- Mock chat window -->
-  <rect x="48" y="118" width="904" height="126" rx="14" fill="#1c1922" stroke="#2b2733" stroke-width="1"/>
-  <circle cx="72" cy="140" r="4.5" fill="#e05561"/>
-  <circle cx="88" cy="140" r="4.5" fill="#e0a35e"/>
-  <circle cx="104" cy="140" r="4.5" fill="#5cb85c"/>
-
-  <!-- Hebrew bubble: right-aligned, RTL -->
-  <rect x="512" y="158" width="420" height="34" rx="10" fill="#2a2431"/>
-  <text x="914" y="180" fill="#f0e9e2" font-size="16" text-anchor="end" direction="rtl">שלום! העברית זורמת מימין לשמאל ✓</text>
+  <g filter="url(#soft)">
+    <rect x="56" y="128" width="1088" height="152" rx="16" fill="#1c1922" stroke="#322c3a" stroke-width="1"/>
+  </g>
+  <!-- title bar dots -->
+  <circle cx="84" cy="152" r="5" fill="#e05561"/>
+  <circle cx="102" cy="152" r="5" fill="#e0a35e"/>
+  <circle cx="120" cy="152" r="5" fill="#5cb85c"/>
+  <line x1="56" y1="172" x2="1144" y2="172" stroke="#2a2531" stroke-width="1"/>
 
   <!-- English bubble: left-aligned, LTR -->
-  <rect x="68" y="200" width="360" height="32" rx="10" fill="#241f1c"/>
-  <text x="84" y="221" fill="#d7cfc7" font-size="15" text-anchor="start">…and English stays left-to-right.</text>
+  <rect x="80" y="192" width="420" height="40" rx="12" fill="url(#bubbleEn)"/>
+  <text x="100" y="217" fill="#d7cfc7" font-size="16" text-anchor="start">Explain the difference in three points.</text>
 
-  <!-- accent underline -->
-  <rect x="512" y="196" width="420" height="2" rx="1" fill="url(#accent)" opacity="0.35"/>
+  <!-- Hebrew bubble: right-aligned, RTL, wide enough not to clip -->
+  <rect x="620" y="242" width="500" height="42" rx="12" fill="url(#bubbleHe)"/>
+  <text x="1096" y="268" fill="#f3ece4" font-size="17" text-anchor="start" direction="rtl">התשובה זורמת בול מימין לשמאל ✓</text>
+
+  <!-- small accent tick under Hebrew bubble -->
+  <rect x="620" y="288" width="500" height="2" rx="1" fill="url(#accent)" opacity="0.4"/>
 </svg>
