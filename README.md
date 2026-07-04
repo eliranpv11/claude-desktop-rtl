@@ -1,134 +1,101 @@
-# Claude Desktop RTL Patch
+# Claude Desktop RTL
 
-Smart RTL (Right-to-Left) support for **Claude Desktop on Windows**. Adds automatic Hebrew/Arabic text direction detection without breaking English or code blocks.
+**Smooth right-to-left (Hebrew · Arabic · Persian) for Claude Desktop on Windows — and for claude.ai in the browser — from one pure, unit-tested engine.**
 
-## What it does
+Out of the box, Claude writes beautiful Hebrew and then renders it left-to-right: bullets on the wrong side, punctuation jumping across the line, tables flowing backwards, `3 < 5` reading as `5 > 3`. This project fixes all of it **without ever touching your text or your network**.
 
-* **Auto-detects RTL text** in Claude's responses and input box
+---
 
-* **Keeps code blocks LTR** — no broken formatting
+## Why it matters
 
-* **Creates backups** of all modified files with full restore support
+- 🎯 **Per-block direction, done right.** Every paragraph, list, table and quote decides its *own* direction from its *own* content. English blocks stay LTR and Hebrew blocks flip RTL **in the same document**, with no global flip — the bug every naive tool has.
+- 🔒 **Zero network. Zero telemetry.** Nothing leaves your machine. Copy and Ctrl-F stay **byte-for-byte** — no invisible Unicode marks are ever injected. Arrows and comparison operators are flipped *visually*, the underlying characters are untouched.
+- 🛡️ **Safe by construction.** Originals are backed up with a validated, atomic copy **before** anything changes, and any failure triggers an **automatic rollback**. One command restores everything.
+- 🧪 **A pure, unit-tested core.** All bidi intelligence lives in a DOM-free engine covered by a torture-test corpus, decoupled from how it is delivered (desktop injection or browser userscript).
 
-* **Automated Updates** — Optional background service to automatically re-apply the patch when Claude updates
+## Architecture
 
-## Quick Install
+```
+engine/     Pure, DOM-free bidi decision engine (unit-tested, no browser needed)
+  ranges    Unicode script classification (astral-safe, 40+ RTL blocks)
+  numbers   EN/AN digits, signed-run detection ("-5" vs Hebrew prefix "ל-15")
+  detect    first-strong + majority; fallback is ALWAYS null, never forced RTL
+  math      LaTeX vs currency ($5.99 stays text, $\frac{}{}$ is math)
+  arrows    horizontal arrows needing a visual RTL flip (math/LTR-context aware)
+  relations mirrored relations ("3 < 5" isolated so it never reads backwards)
+  code      real code vs Hebrew prose mis-fenced as code
+dom/        The thin runtime that applies the engine's decisions to Claude's UI
+  apply.css ~85% of the work, declarative (unicode-bidi:plaintext per leaf block)
+  surfaces  single source of truth for Claude's selectors
+  apply.js  streaming-settle observer, input guards, tables, island wrapping
+build/      Bundles engine+DOM+CSS into one self-contained IIFE (dist/payload.js)
+windows/    The Windows patcher
+  inject.mjs byte-exact injector (spares the main entry, keeps native modules)
+  patch.ps1  install / restore / status / verify / watch — MSIX + Squirrel
+```
 
-Open **PowerShell** and run:
+**Design guarantees the two source tools I studied didn't both have:** the engine validates every input (null/undefined/non-string never throws) and every scan is bounded (no O(n²) path); integrity is handled by turning the Electron ASAR-integrity **fuse off** (encoding-agnostic) rather than a fragile hash byte-scan; and backups are structure-validated with automatic rollback on failure.
 
-`irm https://raw.githubusercontent.com/eliranpv11/claude-desktop-rtl/main/install.ps1 | iex`
+## Install
 
-A UAC prompt will appear — click **Yes** to grant admin privileges.
+### 🪟 Windows (Claude Desktop)
 
-> **Alternative:** Download `patch.ps1` and right-click → **Run with PowerShell**
+One line in **PowerShell** — downloads this repository and launches the patcher (it self-elevates if your install needs admin):
 
-## Requirements
+```powershell
+irm https://raw.githubusercontent.com/eliranpv11/claude-desktop-rtl/main/install.ps1 | iex
+```
 
-* **Windows 10/11** with Claude Desktop installed
+Or from a local clone:
 
-  Download Claude Desktop from [claude.ai](https://downloads.claude.ai/releases/win32/ClaudeSetup.exe)
+```powershell
+git clone https://github.com/eliranpv11/claude-desktop-rtl.git
+cd claude-desktop-rtl
+powershell -ExecutionPolicy Bypass -File .\windows\patch.ps1 -Preflight   # read-only readiness check
+powershell -ExecutionPolicy Bypass -File .\windows\patch.ps1              # interactive menu
+```
 
-* **Node.js** installed (`npx` must be available in PATH)
+**Requirements:** Windows 10/11, [Node.js](https://nodejs.org/) in PATH (used for `@electron/asar` + `@electron/fuses` via `npx`), and administrator rights for a Microsoft-Store (MSIX) install.
 
-* **Administrator privileges** (the script will request elevation automatically)
+**Menu / flags:** `-Install`, `-Restore`, `-Status`, `-Verify`, `-Preflight`, `-Watch`, `-Unwatch`.
 
-> ⚠️ **Windows Only:** This specific patch is for Windows.
->
-> 🍎 **Mac Users:** Try [toboly's mac patch](https://github.com/toboly/claude-desktop-rtl-patch-mac) or [soguy's mac patch](https://github.com/soguy/claude-desktop-rtl-mac). *(Note: I have not personally tested these Mac versions, use at your own risk).*
+> ⚠️ **Windows only** for the desktop app. 🍎 **Mac users:** try [toboly's mac patch](https://github.com/toboly/claude-desktop-rtl-patch-mac) or [soguy's mac patch](https://github.com/soguy/claude-desktop-rtl-mac) *(not tested here; use at your own risk)*.
 
-## Menu Options
+### 🌐 Browser (claude.ai, any OS)
 
-When you run the script, you will see the following interactive menu:
+1. Install **Tampermonkey** (or Violentmonkey).
+2. Build the userscript: `npm run build` → open **`dist/claude-rtl.user.js`** and install it (or paste its contents into a new Tampermonkey script).
+3. Reload `claude.ai`. Hebrew/Arabic replies read right-to-left immediately, including inside the Artifacts panel.
 
-| Option | Description | 
- | ----- | ----- | 
-| **1. Install** | Backs up originals and injects RTL support | 
-| **2. Restore** | Reverts all changes from backup files | 
-| **3. Create Shortcut** | Creates a desktop shortcut for quick 1-click updates | 
-| **4. Enable Auto Re-Patch** | Installs a watcher to re-patch Claude automatically after updates | 
-| **5. Disable Auto Re-Patch** | Removes the background watcher | 
-| **6. Exit** | Close the patcher | 
+## How it works (30 seconds)
 
-## 🔄 Keeping the Patch Updated (Automation)
+The browser already runs a complete Unicode Bidirectional Algorithm. This tool does **not** reimplement it — it makes the **direction & isolation decisions** and lets the renderer reorder. CSS `unicode-bidi: plaintext` on each leaf block is the sole base-direction mechanism for prose, so every block self-determines from its own content and the container is never force-flipped. On the desktop, the same engine is injected into Claude's renderer bundles; the ASAR-integrity fuse is turned off so the modified bundle loads, and where `cowork-svc` guards `claude.exe` the binaries are re-signed with a local certificate.
 
-Claude Desktop updates frequently, and each update will overwrite this patch. To make maintaining the RTL support effortless, the patcher includes two helpful features:
+## Verify & uninstall
 
-1. **Desktop Shortcut (Option 3):** This creates a shortcut on your Desktop named "Update Claude RTL". Double-clicking this will silently fetch and apply the latest patch without making you navigate the menu.
+```powershell
+.\windows\patch.ps1 -Status     # install model, patched?, backup present?, watcher?
+.\windows\patch.ps1 -Verify     # asar payload marker + certificate check (read-only)
+.\windows\patch.ps1 -Restore    # put the validated backups back, remove the local cert
+```
 
-2. **Auto-Updater Service (Option 4):** This sets up a lightweight Windows Scheduled Task. It runs quietly in the background and detects exactly when a new `claude.exe` version is launched. Once it detects an update, it will automatically download and apply the patch, showing you a quick Windows notification when it's done.
+In the browser, open the console and run `__claudeRtlDiag()` to see the payload version and how many surfaces it found (a `surfaces: 0` with `booted` set means a Claude update changed its markup — update `dom/surfaces.js`).
 
-## How it works (Technical)
+## Limitations
 
-Claude Desktop is an Electron application distributed as a **digitally signed** package. Adding RTL support requires modifying the JavaScript inside the app — but this breaks the integrity checks Anthropic uses to verify the application. The patch handles this in three phases:
+- **Real code blocks stay LTR** by design (RTL scrambles braces/indentation/operators). A fence that is actually Hebrew *prose* is detected and rendered RTL.
+- **Desktop Artifacts** render in a cross-origin iframe the desktop payload can't enter yet; the **browser userscript** does cover them.
+- Integrity fuse-off requires Node (for `npx @electron/fuses`) at install time.
 
-### Phase 1 — ASAR Injection
+## Development
 
-Claude's UI code lives inside `app.asar`, a read-only archive format used by Electron. The script:
+```bash
+npm test      # run the engine + build unit tests (node:test, no browser needed)
+npm run build # regenerate dist/payload.js and dist/claude-rtl.user.js
+```
 
-1. Extracts the ASAR archive using `npx asar`
-
-2. Injects a small JavaScript snippet into the renderer files — this snippet detects RTL characters in real time and applies the correct text direction
-
-3. Repacks the ASAR and computes the new SHA-256 hash of its header
-
-### Phase 2 — Hash Replacement in `claude.exe`
-
-`claude.exe` contains the original ASAR hash hardcoded as an ASCII string. The script performs a **direct byte-level search-and-replace** inside the binary to update it to the new hash, so the app accepts the modified ASAR.
-
-### Phase 3 — Certificate Swap in `cowork-svc.exe`
-
-`cowork-svc.exe` is a background service that verifies the authenticity of `claude.exe` using Anthropic's embedded certificate. After re-signing `claude.exe` with a new self-signed certificate, the script:
-
-1. Locates the original Anthropic X.509 certificate inside `cowork-svc.exe` using binary pattern matching (searching for `0x30 0x82` near the string `"Anthropic, PBC"`)
-
-2. Generates a self-signed certificate small enough to fit in the same byte slot
-
-3. Replaces the original certificate in-place, padding with `0x00` to preserve file size and binary offsets
-
-4. Re-signs both `claude.exe` and `cowork-svc.exe` with the new certificate
-
-5. Adds the certificate to the Windows trusted root store (`LocalMachine\Root`)
-
-All original files are backed up before any changes. If anything fails, an automatic rollback restores the originals.
-
-## ⚠️ Disclaimer
-
-> **Please read before installing.**
-
-This patch modifies the internal binaries of Claude Desktop in ways that are **not authorized by Anthropic**. Specifically:
-
-* It replaces Anthropic's code-signing certificate inside `cowork-svc.exe` with a self-signed certificate
-
-* It adds that self-signed certificate to your Windows **trusted root certificate store**
-
-* It bypasses the application's integrity verification mechanism
-
-**By installing this patch you accept the following:**
-
-1. **Use at your own risk.** The authors take no responsibility for any damage to your system, data loss, or application instability.
-
-2. **Anthropic may terminate your account** if they detect unauthorized modifications to their software, per their Terms of Service.
-
-3. **Keep the repository trusted.** If this repository were ever compromised, running the install command could execute malicious code with Administrator privileges. Always verify the source before running any `irm | iex` command.
-
-4. **This patch is temporary.** Claude Desktop updates will overwrite the patched files. You may need to re-run the installer after each update (or use the built-in Auto-Updater).
-
-5. **Not a permanent solution.** This exists only until Anthropic adds native RTL support. Please upvote and request this feature through official Anthropic channels.
-
-This project is open source (MIT). Contributions to improve RTL accuracy are welcome — PRs are open. 🙏
-
-## Troubleshooting
-
-**"Node.js (npx) is required"** — Install Node.js from [nodejs.org](https://nodejs.org/) and reopen PowerShell.
-
-**Service won't start after patching** — Run the script again and choose **Restore** (option 2), then **Install** (option 1).
-
-**Claude updated and the patch broke** — Run the "Update Claude RTL" desktop shortcut, or use the Auto-Updater. If doing it manually, delete any `.bak` files in the Claude app directory and run the installer again.
-
-## Uninstall
-
-Run the script and choose option **2 (Restore)**. This restores all original files from backup and removes the self-signed certificate from your Windows certificate store. If you installed the Auto-Updater, choose option **5** to disable it.
+The engine is pure and unit-tested — the bar for a change is a green `npm test` and a small, single-purpose diff.
 
 ## License
 
-MIT
+[MIT](LICENSE) © eliranpv11

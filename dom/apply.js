@@ -436,6 +436,27 @@ var inLtrIsland = surfaces.inLtrIsland;
     );
 
     document.documentElement.setAttribute('data-claude-rtl', '__PAYLOAD_VERSION__');
+
+    // Diagnostic hook for the "adopt a new Claude version" runbook. If a Claude
+    // update changes its markup, `__claudeRtlDiag().surfaces` drops to 0 while
+    // `booted` is still set — an unambiguous signal that surfaces.js needs new
+    // selectors, without any always-on console noise.
+    try {
+      if (typeof window !== 'undefined') {
+        window.__claudeRtlDiag = function () {
+          var roots = 0;
+          try {
+            roots = document.querySelectorAll(SELECTORS.messageRoot).length;
+          } catch (e) {}
+          return {
+            version: '__PAYLOAD_VERSION__',
+            booted: document.documentElement.getAttribute('data-claude-rtl'),
+            surfaces: roots,
+            artifact: document.documentElement.getAttribute('data-rtl-artifact') === '1',
+          };
+        };
+      }
+    } catch (e) {}
   }
 
   if (document.readyState === 'loading') {
