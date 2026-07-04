@@ -1,5 +1,10 @@
 # Claude Desktop RTL
 
+[![CI](https://github.com/eliranpv11/claude-desktop-rtl/actions/workflows/ci.yml/badge.svg)](https://github.com/eliranpv11/claude-desktop-rtl/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/eliranpv11/claude-desktop-rtl?sort=semver)](https://github.com/eliranpv11/claude-desktop-rtl/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: Windows · Browser](https://img.shields.io/badge/platform-Windows%20%C2%B7%20Browser-informational)](#install)
+
 **Smooth right-to-left (Hebrew · Arabic · Persian) for Claude Desktop on Windows — and for claude.ai in the browser — from one pure, unit-tested engine.**
 
 Out of the box, Claude writes beautiful Hebrew and then renders it left-to-right: bullets on the wrong side, punctuation jumping across the line, tables flowing backwards, `3 < 5` reading as `5 > 3`. This project fixes all of it **without ever touching your text or your network**.
@@ -79,7 +84,7 @@ The browser already runs a complete Unicode Bidirectional Algorithm. This tool d
 .\windows\patch.ps1 -Restore    # put the validated backups back, remove the local cert
 ```
 
-In the browser, open the console and run `__claudeRtlDiag()` to see the payload version and how many surfaces it found (a `surfaces: 0` with `booted` set means a Claude update changed its markup — update `dom/surfaces.js`).
+In the browser (or the desktop devtools), run `__claudeRtlDiag()` in the console. It returns the payload `version`, `booted` flag, and counts: `processed` (blocks stamped by the layer) and `rtlBlocks` (blocks currently rendered RTL). `booted` set with `rtlBlocks: 0` on a Hebrew conversation is the signal that a Claude update changed its markup enough to need attention.
 
 ## Limitations
 
@@ -94,7 +99,7 @@ npm test      # run the engine + build unit tests (node:test, no browser needed)
 npm run build # regenerate dist/payload.js and dist/claude-rtl.user.js
 ```
 
-The engine is pure and unit-tested — the bar for a change is a green `npm test` and a small, single-purpose diff.
+The engine is pure and unit-tested — the bar for a change is a green `npm test` and a small, single-purpose diff. See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [CHANGELOG.md](CHANGELOG.md) for the release history. Security-sensitive behaviour (certificate re-signing, fuse changes) is documented in [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -1,0 +1,16 @@
+# Dependencies (this project has none at runtime; npx fetches build tools on demand)
+node_modules/
+
+# Logs / OS cruft
+*.log
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+
+# Local, non-shared Claude Code settings (launch.json IS shared and tracked)
+.claude/settings.local.json
+
+# NOTE: dist/ is intentionally committed — it is the shipped payload.
