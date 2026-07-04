@@ -1,0 +1,7 @@
+# Force LF for PowerShell scripts so the SHA-256 pinned in
+# run-rtl-patch-local.ps1 stays stable across fresh clones/checkouts.
+# (A checkout that silently rewrote LF->CRLF would change the hash and make
+# the local runner refuse to run.)
+*.ps1 text eol=lf
+LICENSE text eol=lf
+README.md text eol=lf
