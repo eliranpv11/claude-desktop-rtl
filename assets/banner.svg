@@ -1,0 +1,35 @@
+<svg width="1000" height="280" viewBox="0 0 1000 280" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1000" y2="280" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#15131b"/>
+      <stop offset="1" stop-color="#0d0b12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#d97757"/>
+      <stop offset="1" stop-color="#e0a08a"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1000" height="280" rx="20" fill="url(#bg)"/>
+
+  <!-- Title -->
+  <text x="48" y="62" fill="#f4efe9" font-size="30" font-weight="700">Claude Desktop <tspan fill="url(#accent)">RTL</tspan></text>
+  <text x="48" y="90" fill="#8a8580" font-size="15" font-weight="400">Right-to-left for Hebrew · Arabic · Persian — done per block, done right</text>
+
+  <!-- Mock chat window -->
+  <rect x="48" y="118" width="904" height="126" rx="14" fill="#1c1922" stroke="#2b2733" stroke-width="1"/>
+  <circle cx="72" cy="140" r="4.5" fill="#e05561"/>
+  <circle cx="88" cy="140" r="4.5" fill="#e0a35e"/>
+  <circle cx="104" cy="140" r="4.5" fill="#5cb85c"/>
+
+  <!-- Hebrew bubble: right-aligned, RTL -->
+  <rect x="512" y="158" width="420" height="34" rx="10" fill="#2a2431"/>
+  <text x="914" y="180" fill="#f0e9e2" font-size="16" text-anchor="end" direction="rtl">שלום! העברית זורמת מימין לשמאל ✓</text>
+
+  <!-- English bubble: left-aligned, LTR -->
+  <rect x="68" y="200" width="360" height="32" rx="10" fill="#241f1c"/>
+  <text x="84" y="221" fill="#d7cfc7" font-size="15" text-anchor="start">…and English stays left-to-right.</text>
+
+  <!-- accent underline -->
+  <rect x="512" y="196" width="420" height="2" rx="1" fill="url(#accent)" opacity="0.35"/>
+</svg>
