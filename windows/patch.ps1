@@ -657,8 +657,23 @@ function Show-Menu {
     Write-Host '  8. Exit'
     $c = Read-Host "`nChoice"
     switch ($c) {
-        '1' { Invoke-Action -DoInstall }
-        '2' { Invoke-Action -DoRestore }
+        '1' {
+            Write-Host ''
+            Write-Warn2 'Heads up: installing will CLOSE Claude Desktop (and its'
+            Write-Warn2 'cowork-svc service) while it patches, then relaunch it.'
+            Write-Warn2 'Save anything open in Claude first.'
+            $ok = Read-Host 'Do you understand and want to continue? (Y/n)'
+            if ($ok -match '^(n|no)$') { Write-Host 'Cancelled.'; Show-Menu; return }
+            Invoke-Action -DoInstall
+        }
+        '2' {
+            Write-Host ''
+            Write-Warn2 'Restoring will CLOSE Claude Desktop, revert every patched'
+            Write-Warn2 'file from backup, and remove the RTL certificate.'
+            $ok = Read-Host 'Continue? (Y/n)'
+            if ($ok -match '^(n|no)$') { Write-Host 'Cancelled.'; Show-Menu; return }
+            Invoke-Action -DoRestore
+        }
         '3' { Get-Status; Show-Menu }
         '4' { Test-Verify | Out-Null; Show-Menu }
         '5' { Invoke-Preflight | Out-Null; Show-Menu }

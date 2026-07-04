@@ -294,23 +294,19 @@ var inLtrIsland = surfaces.inLtrIsland;
   }
 
   function processAll() {
-    var roots;
-    try {
-      roots = document.querySelectorAll(SELECTORS.messageRoot);
-    } catch (e) {
-      return;
+    // Class-agnostic: process the whole document body. The per-block fingerprints
+    // make settled blocks free to re-scan, and the work cap + requeue keep a huge
+    // transcript from locking the thread. This is what lets assistant messages
+    // flip regardless of the (unstable) class Claude wraps them in.
+    var body = document.body || document.documentElement;
+    if (!body) return false;
+    var res = processRoot(body);
+    if (res.truncated) {
+      pending.add(body);
+      schedule();
+      return true;
     }
-    var any = false;
-    for (var i = 0; i < roots.length; i++) {
-      var res = processRoot(roots[i]);
-      if (res.truncated) any = true;
-    }
-    if (document.documentElement && document.documentElement.hasAttribute &&
-        document.documentElement.getAttribute('data-rtl-artifact') === '1') {
-      // Artifact iframe: content isn't under a messageRoot — process the body.
-      processRoot(document.body);
-    }
-    return any;
+    return false;
   }
 
   // ---- Streaming-settle observer -------------------------------------------
@@ -336,10 +332,12 @@ var inLtrIsland = surfaces.inLtrIsland;
     if (requeue) schedule();
   }
   function nearestRoot(node) {
+    // Climb to the smallest enclosing block so streaming re-processing stays
+    // local (reprocess just the changed paragraph/cell, not the whole document).
     var el = node.nodeType === 1 ? node : node.parentElement;
     if (!el) return null;
-    var root = el.closest ? el.closest(SELECTORS.messageRoot) : null;
-    return root || el;
+    var block = el.closest ? el.closest(SELECTORS.block) : null;
+    return block || el;
   }
   function makeObserver() {
     var obs = new MutationObserver(function (muts) {
@@ -508,14 +506,20 @@ var inLtrIsland = surfaces.inLtrIsland;
     try {
       if (typeof window !== 'undefined') {
         window.__claudeRtlDiag = function () {
-          var roots = 0;
+          var userBubbles = 0;
+          var processed = 0;
+          var rtlBlocks = 0;
           try {
-            roots = document.querySelectorAll(SELECTORS.messageRoot).length;
+            userBubbles = document.querySelectorAll(SELECTORS.messageRoot).length;
+            processed = document.querySelectorAll('[data-rtl-done],[data-rtl-inl],[data-rtl-odir]').length;
+            rtlBlocks = document.querySelectorAll('[dir="rtl"],[data-rtl-odir],[data-rtl-tdir]').length;
           } catch (e) {}
           return {
             version: '__PAYLOAD_VERSION__',
             booted: document.documentElement.getAttribute('data-claude-rtl'),
-            surfaces: roots,
+            userBubbles: userBubbles, // stable anchor count (sanity)
+            processed: processed, // blocks the JS layer has stamped
+            rtlBlocks: rtlBlocks, // blocks currently rendered RTL
             artifact: document.documentElement.getAttribute('data-rtl-artifact') === '1',
           };
         };

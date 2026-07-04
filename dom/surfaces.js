@@ -11,9 +11,17 @@
 // ---------------------------------------------------------------------------
 
 const SELECTORS = {
-  // Rendered assistant/user message roots (redundant on purpose).
-  messageRoot:
-    '.standard-markdown, .font-claude-response, .font-claude-message, [data-testid="user-message"], .prose',
+  // The only DOM-stable message anchor in current Claude Desktop is the user
+  // bubble's testid; assistant responses have no stable class/testid, so the DOM
+  // layer no longer scopes work to a message root — it processes block leaves
+  // document-wide (guarded), and this selector is kept only for the diagnostic
+  // hook and the input-locality climb.
+  messageRoot: '[data-testid="user-message"]',
+
+  // Block-level containers, used to climb from a mutated node to the smallest
+  // enclosing block so streaming re-processing stays local and cheap.
+  block:
+    'p, li, h1, h2, h3, h4, h5, h6, blockquote, dt, dd, figcaption, caption, td, th, ul, ol, table, pre',
 
   // Leaf blocks whose base direction the browser decides via unicode-bidi:plaintext.
   leafBlock:

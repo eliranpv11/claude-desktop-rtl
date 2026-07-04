@@ -6,7 +6,7 @@
 $ErrorActionPreference = 'Stop'
 
 $PatchPath  = Join-Path $PSScriptRoot 'windows\patch.ps1'
-$PinnedHash = '63C372454554C30CF0E54B6EBE4E38D114DECD643D880FD6A45C22855B53C9B7'
+$PinnedHash = 'F34E1D16BB3223257039758DD61948DAF9C87D8417F5B6FB7CDBA9C962B02E46'
 
 if (-not (Test-Path $PatchPath)) {
     Write-Host "patch.ps1 not found at: $PatchPath" -ForegroundColor Red

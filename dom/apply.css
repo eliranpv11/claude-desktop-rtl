@@ -12,16 +12,23 @@
    inline and we must win.
    ------------------------------------------------------------------------- */
 
-/* Per-leaf base direction + logical alignment. */
-:where(.standard-markdown, .font-claude-response, .font-claude-message, [data-testid="user-message"], .prose, [data-rtl-artifact])
-  :is(p, li, h1, h2, h3, h4, h5, h6, blockquote, dt, dd, figcaption, caption, td, th) {
+/* Per-leaf base direction + logical alignment — CLASS-AGNOSTIC on purpose.
+   Claude renames its message-container classes between versions (v1.17377 no
+   longer uses .standard-markdown / .font-claude-response for responses, only the
+   `data-testid="user-message"` bubble is stable), so scoping to those classes
+   silently stops flipping assistant messages. We instead target the prose leaf
+   tags themselves, everywhere. This is SAFE because `unicode-bidi: plaintext`
+   derives each block's base direction from its OWN first-strong character —
+   English blocks stay LTR, Hebrew/Arabic blocks flip RTL — with no global flip
+   and no dependency on a class name that Claude can rename tomorrow. Composer
+   and code/math are handled by their own rules + JS guards below. */
+:where(p, li, h1, h2, h3, h4, h5, h6, blockquote, dt, dd, figcaption, caption, td, th) {
   unicode-bidi: plaintext !important;
   text-align: start !important;
 }
 
 /* Long unbreakable LTR tokens (URLs) inside RTL must not blow out the bubble. */
-:where(.standard-markdown, .font-claude-response, .font-claude-message, .prose)
-  :is(p, li) {
+:where(p, li) {
   overflow-wrap: anywhere;
 }
 
