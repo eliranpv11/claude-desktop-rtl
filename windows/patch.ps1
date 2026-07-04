@@ -199,7 +199,24 @@ function Get-CoworkService {
         Where-Object { $_.PathName -match 'cowork-svc' } | Select-Object -First 1
 }
 
-function Stop-ClaudeStack {
+# Kill the Desktop claude.exe / cowork-svc for THIS install only. Never touches a
+# Claude Code editor (its exe lives under \claude-code\). Safe to call repeatedly.
+function Stop-ClaudeProcs([object]$Claude) {
+    $dir = if ($Claude -and $Claude.AppDir) { $Claude.AppDir } else { $null }
+    foreach ($proc in (Get-Process -Name 'claude', 'cowork-svc' -ErrorAction SilentlyContinue)) {
+        $path = $null; try { $path = $proc.Path } catch {}
+        # Hard exclusion: the Claude Code CLI/editor is never a target.
+        if ($path -and $path -match '\\claude-code\\') { continue }
+        $belongs = $false
+        if ($dir -and $path) { $belongs = $path.StartsWith($dir, [System.StringComparison]::OrdinalIgnoreCase) }
+        if (-not $belongs -and $path) { $belongs = ($path -match 'WindowsApps\\Claude_|AnthropicClaude\\app-') }
+        # cowork-svc without a readable path is the guarded service — safe to stop mid-patch.
+        if (-not $belongs -and $proc.Name -eq 'cowork-svc' -and -not $path) { $belongs = $true }
+        if ($belongs) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Stop-ClaudeStack([object]$Claude) {
     Write-Step 'Halting Claude and cowork-svc...'
     $svc = Get-CoworkService
     if ($svc) {
@@ -209,11 +226,7 @@ function Stop-ClaudeStack {
             Start-Sleep -Seconds 1
         }
     }
-    foreach ($n in @('claude', 'cowork-svc')) {
-        # Only kill processes from THIS Claude install path (never a Claude Code editor).
-        Get-Process -Name $n -ErrorAction SilentlyContinue | Where-Object { $_.Path } |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-    }
+    Stop-ClaudeProcs $Claude
     Start-Sleep -Seconds 2
     Write-Ok 'Stopped.'
 }
@@ -255,7 +268,10 @@ function Invoke-Asar([string[]]$AsarArgs) {
 }
 function Invoke-Fuses([string[]]$FuseArgs) {
     $cmd = 'npx --yes @electron/fuses ' + ($FuseArgs -join ' ')
-    cmd.exe /c $cmd
+    # Capture output so a failure surfaces its real reason (lock vs. missing
+    # sentinel vs. network) instead of a bare non-zero exit code.
+    $out = & cmd.exe /c "$cmd 2>&1"
+    $script:LastFuseOutput = ($out | Out-String).Trim()
     return $LASTEXITCODE
 }
 
@@ -421,6 +437,10 @@ function Invoke-CertDance([object]$Claude) {
 function Invoke-ReSign([string]$Path, $Cert) {
     for ($i = 1; $i -le 6; $i++) {
         try {
+            # A respawned claude.exe can re-lock the binary between phases; clear it
+            # and wait for the handle before signing.
+            Stop-ClaudeProcs $null
+            Wait-FileUnlock $Path 8
             $r = Set-AuthenticodeSignature -FilePath $Path -Certificate $Cert -HashAlgorithm SHA256 -ErrorAction Stop
             if ($r.Status -eq 'Valid') { Write-Ok "re-signed $(Split-Path $Path -Leaf)"; return }
         } catch { Start-Sleep -Seconds 2 }
@@ -545,7 +565,7 @@ function Install-Patch([object]$Claude) {
     if (-not (Test-Path $script:PayloadJs)) { throw "payload not built: $script:PayloadJs (run npm run build first)" }
     if (-not (Test-NodeTooling)) { throw 'Node.js is required (asar/fuses).' }
 
-    Stop-ClaudeStack
+    Stop-ClaudeStack $Claude
     if ($Claude.Model -eq 'MSIX') { Write-Step 'Taking ownership...'; Grant-Write $Claude.AppDir }
 
     Backup-Originals $Claude
@@ -569,13 +589,22 @@ function Install-Patch([object]$Claude) {
         Write-Ok 'app.asar patched.'
 
         Write-Step 'Phase 2: disable ASAR-integrity fuse on claude.exe'
-        Wait-FileUnlock $Claude.Exe
+        # Phase 1 (extract/inject/pack) is slow; a claude.exe can respawn and
+        # re-lock the binary mid-way. Re-kill THIS install's processes and wait for
+        # the handle to release on every attempt, then flip the fuse.
         $fuseOk = $false
-        for ($i = 1; $i -le 6; $i++) {
+        for ($i = 1; $i -le 8; $i++) {
+            Stop-ClaudeProcs $Claude
+            try { Wait-FileUnlock $Claude.Exe 10 }
+            catch { Write-Warn2 "claude.exe still locked (attempt $i); retrying..."; Start-Sleep -Seconds 2; continue }
             if ((Invoke-Fuses @('write', '--app', "`"$($Claude.Exe)`"", 'EnableEmbeddedAsarIntegrityValidation=off')) -eq 0) { $fuseOk = $true; break }
+            Write-Warn2 "fuse write attempt $i failed; retrying..."
             Start-Sleep -Seconds 2
         }
-        if (-not $fuseOk) { throw 'fuse write failed (claude.exe locked?)' }
+        if (-not $fuseOk) {
+            if ($script:LastFuseOutput) { Write-Err "fuses output: $script:LastFuseOutput" }
+            throw 'fuse write failed (claude.exe kept relocking, or @electron/fuses could not flip it)'
+        }
         Write-Ok 'ASAR-integrity fuse disabled.'
 
         Write-Step 'Phase 3: certificate sync'
@@ -603,7 +632,7 @@ function Install-Patch([object]$Claude) {
 
 function Restore-Patch([object]$Claude) {
     Write-Host "`n=== Restoring Claude to original ===" -ForegroundColor Cyan
-    Stop-ClaudeStack
+    Stop-ClaudeStack $Claude
     if ($Claude.Model -eq 'MSIX') { Grant-Write $Claude.AppDir }
     $ok = Restore-FromBackups $Claude
     Remove-RtlCerts

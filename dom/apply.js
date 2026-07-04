@@ -407,6 +407,65 @@ var inLtrIsland = surfaces.inLtrIsland;
     }
   }
 
+  // ---- Success toast (once per Claude version) -----------------------------
+  // Shown in-app after the patch loads, and again after each Claude update
+  // re-applies the patch (the UA version changes, so the saved flag no longer
+  // matches). Self-contained inline styles — no dependency on APPLY_CSS, and it
+  // lives above everything so it can't be clipped by app chrome.
+  function welcomeToast() {
+    try {
+      if (typeof localStorage === 'undefined' || !document.body) return;
+      var FLAG = 'claude-rtl-welcomed';
+      var m = (navigator.userAgent || '').match(/Claude\/([\d.]+)/);
+      var ver = m ? m[1] : '__PAYLOAD_VERSION__';
+      if (localStorage.getItem(FLAG) === ver) return;
+      if (document.getElementById('claude-rtl-toast')) return;
+
+      var bar = document.createElement('div');
+      bar.id = 'claude-rtl-toast';
+      bar.dir = 'rtl';
+      bar.style.cssText = [
+        'position:fixed', 'top:14px', 'left:50%', 'transform:translateX(-50%) translateY(-16px)',
+        'z-index:2147483647', 'opacity:0', 'transition:opacity .25s ease, transform .25s ease',
+        'background:#16a34a', 'color:#fff', 'border-radius:12px',
+        'padding:12px 16px', 'font:14px/1.5 system-ui,-apple-system,Segoe UI,sans-serif',
+        'box-shadow:0 10px 30px rgba(0,0,0,.35)', 'display:flex', 'gap:12px',
+        'align-items:center', 'max-width:min(90vw,520px)', 'pointer-events:auto',
+        'direction:rtl', 'text-align:right',
+      ].join(';');
+      bar.innerHTML =
+        '<span style="font-size:20px;line-height:1">✓</span>' +
+        '<span style="flex:1">עברית הופעלה — ' +
+        'תמיכת RTL הותקנה בהצלחה. ' +
+        'טקסט עברי יוצג מימין לשמאל, ' +
+        'וקוד יישאר משמאל לימין.</span>' +
+        '<button id="claude-rtl-toast-x" aria-label="close" ' +
+        'style="background:transparent;color:#e6ffe9;border:0;font-size:22px;line-height:1;cursor:pointer;padding:0 2px">×</button>';
+      document.body.appendChild(bar);
+
+      // Animate in on the next frame.
+      requestAnimationFrame(function () {
+        bar.style.opacity = '1';
+        bar.style.transform = 'translateX(-50%) translateY(0)';
+      });
+
+      var closed = false;
+      function dismiss() {
+        if (closed) return;
+        closed = true;
+        try { localStorage.setItem(FLAG, ver); } catch (e) {}
+        bar.style.opacity = '0';
+        bar.style.transform = 'translateX(-50%) translateY(-16px)';
+        setTimeout(function () { if (bar.parentNode) bar.parentNode.removeChild(bar); }, 300);
+      }
+      var xBtn = bar.querySelector('#claude-rtl-toast-x');
+      if (xBtn) xBtn.addEventListener('click', dismiss);
+      setTimeout(dismiss, 7000); // auto-dismiss
+    } catch (e) {
+      /* non-fatal */
+    }
+  }
+
   // ---- Init ----------------------------------------------------------------
   function init() {
     if (!document.documentElement) return;
@@ -422,6 +481,11 @@ var inLtrIsland = surfaces.inLtrIsland;
     processAll();
     makeObserver();
     wcoFix();
+
+    // Success toast only in the real app window (not artifact/tool iframes).
+    var isTop = true;
+    try { isTop = window.self === window.top; } catch (e) { isTop = false; }
+    if (isTop) welcomeToast();
 
     // Re-assert input dir as the user types (React strips dir on re-render).
     document.addEventListener(
