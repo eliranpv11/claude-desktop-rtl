@@ -1,0 +1,58 @@
+name: Bug report
+description: Something renders wrong, or the patcher fails
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please include the details below — they make bugs
+        far faster to reproduce. For **security** issues, do not file here; open a
+        private advisory (see SECURITY.md).
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      options:
+        - Claude Desktop (Windows)
+        - Browser userscript (claude.ai)
+        - The patcher / install itself
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: Install model (desktop only)
+      description: "`.\\windows\\patch.ps1 -Status` prints this."
+      options:
+        - MSIX (Microsoft Store)
+        - Squirrel (claude.ai installer)
+        - Not applicable / browser
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Desktop version
+      placeholder: e.g. 1.17377.2.0
+  - type: input
+    id: rtl-version
+    attributes:
+      label: Claude Desktop RTL version
+      placeholder: "e.g. 0.3.0 — from __claudeRtlDiag().version or the release you installed"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened vs. what you expected
+      description: A screenshot of the misrendered text helps a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: diag
+    attributes:
+      label: Diagnostics
+      description: "Paste the output of `__claudeRtlDiag()` (console) and/or `.\\windows\\patch.ps1 -Status`."
+      render: text
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample text
+      description: The exact Hebrew/Arabic text that renders wrong, so it can be added to the test corpus.
+      render: text
