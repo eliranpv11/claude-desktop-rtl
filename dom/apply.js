@@ -177,6 +177,71 @@ var inLtrIsland = surfaces.inLtrIsland;
     return true;
   }
 
+  // ---- Structural decoration: flip physical box props on RTL blocks ---------
+  // Claude styles prose with PHYSICAL Tailwind utilities (border-left, padding-
+  // left, margin-left) — verified against the live bundle; it uses no logical
+  // (inline) properties. Setting `direction: rtl` alone therefore does NOT move
+  // a blockquote's bar or a list's bullets to the right. So for a block whose
+  // content is RTL we read the ACTUAL computed left border/padding and mirror it
+  // to the right (value-agnostic: works whatever the exact rem/px value is), and
+  // revert cleanly if the content later stops being RTL.
+  var DBLK = 'data-rtl-dblk';
+  function getCS(el) {
+    try {
+      return typeof window !== 'undefined' && window.getComputedStyle
+        ? window.getComputedStyle(el)
+        : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  function flipBox(el) {
+    var cs = getCS(el);
+    if (!cs) return;
+    var pl = parseFloat(cs.paddingLeft) || 0;
+    if (pl > 0) {
+      el.style.paddingRight = cs.paddingLeft;
+      el.style.paddingLeft = '0px';
+    }
+    var blw = parseFloat(cs.borderLeftWidth) || 0;
+    if (blw > 0) {
+      el.style.borderRightWidth = cs.borderLeftWidth;
+      el.style.borderRightStyle = cs.borderLeftStyle;
+      el.style.borderRightColor = cs.borderLeftColor;
+      el.style.borderLeftWidth = '0px';
+    }
+  }
+  function unflipBox(el) {
+    el.style.paddingRight = '';
+    el.style.paddingLeft = '';
+    el.style.borderRightWidth = '';
+    el.style.borderRightStyle = '';
+    el.style.borderRightColor = '';
+    el.style.borderLeftWidth = '';
+  }
+  function processDirBlock(el) {
+    if (!el || inEditable(el)) return false;
+    var t = el.textContent || '';
+    var rtl = resolvedDir(t) === 'rtl';
+    if (rtl) {
+      if (el.getAttribute(DBLK) === fp(t) && el.getAttribute('dir') === 'rtl') return false;
+      el.setAttribute('dir', 'rtl');
+      el.setAttribute(DBLK, fp(t));
+      if (el.tagName === 'LI') el.style.listStylePosition = 'inside';
+      flipBox(el);
+      return true;
+    }
+    // Not RTL: revert only what WE set (never an author's dir).
+    if (el.getAttribute(DBLK) != null) {
+      if (el.getAttribute('dir') === 'rtl') el.removeAttribute('dir');
+      el.removeAttribute(DBLK);
+      if (el.tagName === 'LI') el.style.listStylePosition = '';
+      unflipBox(el);
+      return true;
+    }
+    return false;
+  }
+
   // ---- Inline islands: wrap arrows / relations / signed numbers -------------
   function makeSpan(kind, text) {
     var span = document.createElement('span');
@@ -288,6 +353,7 @@ var inLtrIsland = surfaces.inLtrIsland;
     each(SELECTORS.code, processCodeBlock);
     each(SELECTORS.table, processTable);
     each(SELECTORS.proseDir, processProse);
+    each(SELECTORS.dirBlock, processDirBlock);
     each(SELECTORS.leafBlock, processLeafInlines);
     sweepInputs(root);
     return { work: work, truncated: truncated };

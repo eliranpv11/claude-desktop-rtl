@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "rtl-fixture",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dev/fixture/serve.js"],
+      "port": 5599
+    }
+  ]
+}

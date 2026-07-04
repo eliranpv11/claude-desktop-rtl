@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Claude RTL fixture</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; }
+      /* Mimic Claude's PHYSICAL Tailwind prose styling (border-left / padding-left)
+         on a container class we deliberately do NOT target, to prove class-agnostic. */
+      blockquote { border-left: 4px solid #9b87f5; padding-left: 1rem; margin-inline: 0; color: #555; }
+      ul, ol { padding-left: 1.5rem; }
+      pre { background: #f4f4f4; padding: 12px; direction: ltr; }
+      table { border-collapse: collapse; }
+      th, td { border: 1px solid #ccc; padding: 4px 10px; }
+    </style>
+  </head>
+  <body>
+    <!-- User bubble: the one stable anchor. -->
+    <div data-testid="user-message">
+      <p id="u1">מה ההבדל בין רשימה מקוננת לטבלה, ואיך זה נראה עם קצת English באמצע?</p>
+    </div>
+
+    <!-- Assistant response under a NON-targeted class (like the real app now). -->
+    <div class="assistant-turn-content grid gap-2.5">
+      <p id="p1">הנה ההסבר המלא על ההבדלים העיקריים בין המבנים.</p>
+
+      <blockquote id="bq1">
+        <p id="bqp">שים לב: תמיד כדאי לבדוק את המקור לפני שמסתמכים עליו.</p>
+      </blockquote>
+
+      <ul id="ul1">
+        <li id="li1">פריט ראשון בעברית פשוטה.</li>
+        <li id="li2">
+          פריט שני עם <code>inline code</code> באמצע המשפט.
+          <ul id="ul2">
+            <li id="li3">תת-פריט מקונן ברמה שנייה.</li>
+          </ul>
+        </li>
+      </ul>
+
+      <p id="p2">התנאי 0 &lt; x ≤ 10 מתקיים, החץ קלט → פלט, והטמפרטורה -5 מעלות.</p>
+
+      <p id="pen">This paragraph is English and must stay left-to-right.</p>
+
+      <pre id="pre1"><code>function add(a, b) { return a + b; }</code></pre>
+
+      <table id="tbl1">
+        <thead><tr><th id="th1">שם</th><th id="th2">Value</th></tr></thead>
+        <tbody>
+          <tr><td id="td1">אלפא</td><td id="td2">100</td></tr>
+          <tr><td>בטא</td><td>250</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- The freshly built payload, exactly as injected into Claude's renderer. -->
+    <script src="/dist/payload.js"></script>
+  </body>
+</html>

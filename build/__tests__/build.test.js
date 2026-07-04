@@ -185,10 +185,12 @@ function makeText(value) {
 test('assistant-style Hebrew <p> with NO message-root class is processed (class-agnostic)', () => {
   const payload = buildPayload();
 
-  // A DOM that mimics Claude's real markup: a plain <div><p>Hebrew…</p></div>
-  // with NONE of the old .standard-markdown / .font-claude-response classes.
+  // A DOM that mimics Claude's real markup: a plain <div>…</div> with NONE of the
+  // old .standard-markdown / .font-claude-response classes, holding a Hebrew
+  // paragraph and a Hebrew blockquote (a structural dir-block).
   const para = makeEl('p', null, [makeText('שלום עולם, זה טקסט בעברית')]);
-  const body = makeEl('body', null, [makeEl('div', null, [para])]);
+  const quote = makeEl('blockquote', null, [makeEl('p', null, [makeText('ציטוט בעברית')])]);
+  const body = makeEl('body', null, [makeEl('div', null, [para, quote])]);
 
   const de = {
     _attrs: {},
@@ -245,4 +247,8 @@ test('assistant-style Hebrew <p> with NO message-root class is processed (class-
   // The class-less paragraph must have been reached by the leaf-inline pass —
   // proof the layer no longer depends on a message-root class.
   assert.ok(para.hasAttribute('data-rtl-inl'), 'class-less Hebrew <p> was processed document-wide');
+  // The Hebrew blockquote must be marked RTL by the structural dir-block pass so
+  // CSS/JS can move its bar and padding to the right (box flip itself needs a
+  // real browser's getComputedStyle; here we assert the direction decision).
+  assert.equal(quote.getAttribute('dir'), 'rtl', 'Hebrew blockquote marked dir=rtl');
 });

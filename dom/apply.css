@@ -94,12 +94,18 @@ table[dir='rtl'] {
   transform: scaleX(-1);
 }
 
-/* RTL list markers/indent hang on the content (right) side. */
-[dir='rtl'] > :is(ul, ol),
-:is(ul, ol)[dir='rtl'] {
-  padding-right: 1.5em;
-  padding-left: 0;
+/* RTL structural blocks. The exact left padding/border VALUE is mirrored to the
+   right by JS (processDirBlock) since Claude's Tailwind uses physical props with
+   values we can't assume here; these rules only cover what's value-independent:
+   the container reads RTL, and list bullets hang on the content (right) side. */
+:is(ul, ol, blockquote, li)[dir='rtl'] {
+  direction: rtl;
 }
 li[dir='rtl'] {
   list-style-position: inside;
+}
+/* Task-list checkboxes sit before the text on the right in RTL. */
+li[dir='rtl'] input[type='checkbox'] {
+  margin-left: 0.5em;
+  margin-right: 0;
 }
