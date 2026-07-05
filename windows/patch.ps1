@@ -38,6 +38,8 @@ $script:PayloadJs  = Join-Path $script:RepoRoot 'dist\payload.js'
 $script:InjectMjs  = Join-Path $PSScriptRoot 'inject.mjs'
 $script:StateDir   = Join-Path $env:ProgramData 'ClaudeRtl'
 $script:StateFile  = Join-Path $script:StateDir 'state.json'
+$script:AppHome    = Join-Path $script:StateDir 'app'    # stable copy of the runtime for the watcher
+$script:WatchLog   = Join-Path $script:StateDir 'watcher.log'
 $script:TaskName   = 'ClaudeRtlWatcher'
 $script:Marker     = 'claude-rtl-payload'
 $script:BakSuffix  = '.crtl-bak'
@@ -541,20 +543,154 @@ function Test-Verify {
 # --------------------------------------------------------------------------
 # Watcher (scheduled task, re-invokes THIS local script -Auto)
 # --------------------------------------------------------------------------
-function Install-Watcher {
-    if (-not $PSCommandPath) { Write-Warn2 'Watcher needs a local script path; run from a clone.'; return }
-    Write-Step 'Installing auto re-patch watcher...'
-    $action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Auto"
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -RunLevel Highest -LogonType Interactive
-    Register-ScheduledTask -TaskName $script:TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'Re-applies Claude RTL after an update.' -Force | Out-Null
-    Write-Ok "Watcher '$script:TaskName' installed."
+function Write-WatchLog($m) {
+    # Lightweight append-only log so the (headless) watcher is debuggable.
+    try {
+        if (-not (Test-Path $script:StateDir)) { New-Item -ItemType Directory -Path $script:StateDir -Force | Out-Null }
+        if ((Test-Path $script:WatchLog) -and (Get-Item $script:WatchLog).Length -gt 512KB) {
+            Move-Item $script:WatchLog "$script:WatchLog.old" -Force -ErrorAction SilentlyContinue
+        }
+        "$((Get-Date).ToString('o'))  $m" | Out-File -Append -FilePath $script:WatchLog -Encoding UTF8
+    } catch {}
 }
+
+# Copy src -> dst unless they are the SAME file (which happens when the patcher
+# is run from the already-staged copy). Copy-Item onto itself throws under
+# ErrorActionPreference=Stop, so guard every copy, not just patch.ps1.
+function Copy-IfDifferent([string]$Src, [string]$Dst) {
+    if (-not (Test-Path $Src)) { throw "missing source for staging: $Src" }
+    $srcFull = (Resolve-Path $Src).Path
+    $dstFull = if (Test-Path $Dst) { (Resolve-Path $Dst).Path } else { $Dst }
+    if ($srcFull -ieq $dstFull) { return }  # same file: nothing to do
+    Copy-Item $Src $Dst -Force
+}
+
+# Stage the patcher + injector + payload into a STABLE location so the watcher
+# never depends on the temp clone that install.ps1 extracts (Windows cleans TEMP,
+# which silently broke the old watcher). Returns the staged patch.ps1 path.
+function Copy-Runtime {
+    if (-not (Test-Path $script:PayloadJs)) { throw "payload not built at $script:PayloadJs" }
+    $dstWindows = Join-Path $script:AppHome 'windows'
+    $dstDist    = Join-Path $script:AppHome 'dist'
+    New-Item -ItemType Directory -Force -Path $dstWindows, $dstDist | Out-Null
+    $stagedPatch = Join-Path $dstWindows 'patch.ps1'
+    Copy-IfDifferent (Join-Path $PSScriptRoot 'patch.ps1') $stagedPatch
+    Copy-IfDifferent $script:InjectMjs (Join-Path $dstWindows 'inject.mjs')
+    Copy-IfDifferent $script:PayloadJs (Join-Path $dstDist 'payload.js')
+    return $stagedPatch
+}
+
+# The real interactively-logged-on user, which is who the watcher task must run
+# as (MSIX packages are per-user, so Get-AppxPackage only sees Claude in THAT
+# user's context). Do NOT use GetCurrent(): when a standard user elevates with a
+# separate admin account, GetCurrent() is the admin, and a task registered for
+# the admin with LogonType Interactive would never fire in the real session.
+function Get-InteractiveUser {
+    try {
+        $u = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
+        if ($u) { return $u }
+    } catch {}
+    return [Security.Principal.WindowsIdentity]::GetCurrent().Name
+}
+
+function Install-Watcher {
+    Write-Step 'Installing auto re-patch watcher...'
+    # 1) Stage a durable copy of the runtime and point the task at it.
+    $target = Copy-Runtime
+    Write-Ok "Runtime staged at $script:AppHome"
+
+    # 2) Two triggers so an update is caught BOTH at logon AND mid-session:
+    #    - AtLogOn: covers updates applied while signed out / across reboots.
+    #    - a 5-minute repetition: covers updates applied while you are working
+    #      (the old logon-only trigger never fired for those -- the actual bug).
+    $t1 = New-ScheduledTaskTrigger -AtLogOn
+    $t2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+            -RepetitionInterval (New-TimeSpan -Minutes 5) `
+            -RepetitionDuration (New-TimeSpan -Days 3650)
+
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+        -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$target`" -Auto"
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+    $principal = New-ScheduledTaskPrincipal -UserId (Get-InteractiveUser) `
+        -RunLevel Highest -LogonType Interactive
+
+    Register-ScheduledTask -TaskName $script:TaskName -Action $action -Trigger $t1, $t2 `
+        -Settings $settings -Principal $principal `
+        -Description 'Re-applies Claude RTL automatically after a Claude update.' -Force | Out-Null
+
+    # 3) Kick it once now so a pending update is fixed immediately, not in 5 min.
+    Start-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
+    Write-Ok "Watcher '$script:TaskName' installed (checks at logon + every 5 min)."
+}
+
 function Uninstall-Watcher {
     $t = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
     if ($t) { Unregister-ScheduledTask -TaskName $script:TaskName -Confirm:$false; Write-Ok 'Watcher removed.' }
     else { Write-Log 'No watcher installed.' }
+    if (Test-Path $script:AppHome) { Remove-Item $script:AppHome -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# Failure memory so a version that CANNOT be patched (offline npx, persistent
+# file lock, fuse won't flip, cert dance throws) does not make the 5-minute tick
+# kill+relaunch Claude forever. We cap attempts per version and then back off.
+$script:FailFile     = Join-Path $script:StateDir 'watch-fail.json'
+$script:MaxAttempts  = 3     # kill/relaunch at most this many times per broken version
+$script:CooldownHrs  = 6     # after the cap, retry only this often (until version changes)
+
+function Get-Fail {
+    if (-not (Test-Path $script:FailFile)) { return $null }
+    try { return (Get-Content $script:FailFile -Raw | ConvertFrom-Json) } catch { return $null }
+}
+function Set-Fail([string]$Version) {
+    $prev = Get-Fail
+    $count = if ($prev -and $prev.version -eq $Version) { [int]$prev.count + 1 } else { 1 }
+    @{ version = $Version; count = $count; at = (Get-Date).ToUniversalTime().ToString('o') } |
+        ConvertTo-Json | Set-Content -Path $script:FailFile -Encoding ASCII
+}
+function Clear-Fail {
+    if (Test-Path $script:FailFile) { Remove-Item $script:FailFile -Force -ErrorAction SilentlyContinue }
+}
+
+# Silent, gated re-patch for the scheduled task. Acts ONLY when the installed
+# Claude version differs from the version we last patched (an update reverted the
+# patch) -- so the 5-minute tick is a no-op cost until an update actually lands,
+# and Claude is never needlessly restarted.
+function Invoke-AutoPatch {
+    $claude = Find-ClaudeInstall
+    if (-not $claude) { Write-WatchLog 'auto: Claude not found'; return }
+
+    $patchedVer = $null
+    if (Test-Path $script:StateFile) {
+        try { $patchedVer = (Get-Content $script:StateFile -Raw | ConvertFrom-Json).version } catch {}
+    }
+    $curVer = "$($claude.Version)"
+
+    # Pure version comparison: an MSIX/Squirrel update ALWAYS bumps the version
+    # and reverts our patch, so a mismatch is the exact "an update happened"
+    # signal. Matching versions => still patched (cheap no-op, no 36 MB asar read
+    # every tick), and this also respects a deliberate manual -Restore instead of
+    # fighting it back on.
+    if ($curVer -eq $patchedVer) { Clear-Fail; return }
+
+    # Back-off gate: if THIS version has already failed MaxAttempts times, stop
+    # thrashing (kill+relaunch every 5 min). Retry only once per CooldownHrs, and
+    # reset naturally when a genuinely new version arrives (fail.version changes).
+    $fail = Get-Fail
+    if ($fail -and $fail.version -eq $curVer -and [int]$fail.count -ge $script:MaxAttempts) {
+        $sinceHrs = try { ((Get-Date).ToUniversalTime() - [datetime]$fail.at).TotalHours } catch { 999 }
+        if ($sinceHrs -lt $script:CooldownHrs) { return }  # silent: don't kill Claude again yet
+    }
+
+    Write-WatchLog "auto: re-patch needed (installed=$curVer, patched=$patchedVer, priorFails=$(if($fail -and $fail.version -eq $curVer){$fail.count}else{0})). Applying..."
+    try {
+        Install-Patch $claude
+        Clear-Fail
+        Write-WatchLog "auto: re-patched to $curVer OK"
+    } catch {
+        Set-Fail $curVer
+        Write-WatchLog "auto: re-patch FAILED: $($_.Exception.Message)"
+    }
 }
 
 # --------------------------------------------------------------------------
@@ -706,7 +842,8 @@ if ($Status)    { Get-Status; return }
 if ($Verify)    { Test-Verify | Out-Null; return }
 if ($Unwatch)   { Uninstall-Watcher; return }
 if ($Watch)     { Install-Watcher; return }
+if ($Auto)      { Invoke-AutoPatch; return }   # headless watcher tick: gated, silent
 if ($Restore)   { Invoke-Action -DoRestore; return }
-if ($Install -or $Auto) { Invoke-Action -DoInstall; return }
+if ($Install)   { Invoke-Action -DoInstall; return }
 
 Show-Menu
