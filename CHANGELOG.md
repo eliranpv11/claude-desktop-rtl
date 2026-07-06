@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-07-06
+
+### Added
+- **RTL for the "ask" question boxes.** The multiple-choice elicitation widgets
+  (`<form class="elicit">`) now mirror to RTL when the question is Hebrew: a new
+  `processElicit` pass sets `dir="rtl"` on the widget so choice pills flow from
+  the right and the question/footer align correctly. The decision is made from
+  the question text (not the English button labels), only ever touches a `dir`
+  we set, and leaves English question boxes LTR. Verified in a real browser
+  (Hebrew box mirrors, pills flow right-to-left; English box unchanged) and that
+  the existing message/sidebar/code behaviour is untouched.
+
 ## [0.4.0] — 2026-07-06
 
 ### Added

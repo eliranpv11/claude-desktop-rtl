@@ -61,6 +61,15 @@ const SELECTORS = {
   table: 'table',
   cell: 'td, th',
 
+  // The "ask" / elicitation widget (multiple-choice question boxes). Claude
+  // renders these as <form class="elicit"> with .elicit-question / .elicit-pills
+  // / .elicit-footer children. Unlike generic chrome, this is a self-contained
+  // structured region where FULL layout mirroring (dir=rtl) is the correct RTL
+  // behaviour: choice pills should flow from the right and the submit/skip row
+  // should mirror. Scoped to just the widget, so blast radius is tiny.
+  elicit: 'form.elicit, .elicit',
+  elicitQuestion: '.elicit-question, .elicit-header',
+
   // Zones we must never inject markup into (would break the app or fidelity).
   noInject:
     'style, script, textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"], .ProseMirror',

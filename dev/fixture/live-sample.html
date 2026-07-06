@@ -68,6 +68,41 @@
       </table>
     </div>
 
+    <!-- The "ask" / elicitation widget (multiple-choice question box), matching
+         the real app: <form class="elicit"> with question + pills + footer. -->
+    <style>
+      form.elicit { border:1px solid #ccc; border-radius:10px; padding:12px; max-width:520px; margin-top:16px; }
+      .elicit-question { font-weight:600; margin-bottom:8px; }
+      .elicit-pills { display:flex; gap:8px; flex-wrap:wrap; }
+      .elicit-pill { border:1px solid #bbb; border-radius:999px; padding:6px 12px; background:#fafafa; }
+      .elicit-footer { display:flex; gap:8px; margin-top:10px; }
+    </style>
+    <form id="ask-he" class="elicit">
+      <div class="elicit-body">
+        <div class="elicit-question">לאיזה כיוון שיפור לפנות עכשיו?</div>
+        <div class="elicit-pills">
+          <button type="button" class="elicit-pill" id="pill1">דיוק RTL אמיתי</button>
+          <button type="button" class="elicit-pill" id="pill2">מבחני jsdom</button>
+          <button type="button" class="elicit-pill">עמידות אחרי עדכונים</button>
+        </div>
+        <div class="elicit-footer">
+          <button type="button" class="elicit-skip">דלג</button>
+          <button type="button" class="elicit-submit">שלח</button>
+        </div>
+      </div>
+    </form>
+
+    <!-- An English elicit widget must stay LTR (control). -->
+    <form id="ask-en" class="elicit">
+      <div class="elicit-body">
+        <div class="elicit-question">Which direction should we take?</div>
+        <div class="elicit-pills">
+          <button type="button" class="elicit-pill" id="enpill1">First option</button>
+          <button type="button" class="elicit-pill">Second option</button>
+        </div>
+      </div>
+    </form>
+
     <!-- The freshly built payload, exactly as injected into Claude's renderer. -->
     <script src="/dist/payload.js"></script>
   </body>

@@ -1,6 +1,6 @@
 {
   "name": "claude-desktop-rtl",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Smart right-to-left (Hebrew/Arabic/Persian) support for Claude Desktop on Windows, from one pure, unit-tested engine.",
   "license": "MIT",

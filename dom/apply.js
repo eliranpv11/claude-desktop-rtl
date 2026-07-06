@@ -353,6 +353,30 @@ var inLtrIsland = surfaces.inLtrIsland;
     return true;
   }
 
+  // ---- Elicit / "ask" question widget: mirror the whole box when RTL --------
+  // For the multiple-choice question boxes (<form class="elicit">), the right
+  // behaviour is to mirror the whole widget so pills flow from the right and the
+  // footer buttons swap sides — so here (and ONLY here) we set dir="rtl". The
+  // decision is made from the QUESTION text, not the (often English) button
+  // labels, and we only ever touch a dir WE set (data-rtl-elic), never the app's.
+  function processElicit(el) {
+    if (!el || inEditable(el)) return false;
+    var t = el.textContent || '';
+    if (el.getAttribute('data-rtl-edone') === fp(t)) return false;
+
+    var q = (el.querySelector && el.querySelector(SELECTORS.elicitQuestion)) || el;
+    var dir = detectBlockDir((q && q.textContent) || t);
+    if (dir === 'rtl') {
+      el.setAttribute('dir', 'rtl');
+      el.setAttribute('data-rtl-elic', '1');
+    } else if (el.getAttribute('data-rtl-elic') === '1') {
+      el.removeAttribute('dir');
+      el.removeAttribute('data-rtl-elic');
+    }
+    el.setAttribute('data-rtl-edone', fp(t));
+    return true;
+  }
+
   // ---- Orchestrate one root, with a work cap -------------------------------
   function processRoot(root) {
     if (!root || root.nodeType !== 1) return { work: 0, truncated: false };
@@ -388,6 +412,7 @@ var inLtrIsland = surfaces.inLtrIsland;
     each(SELECTORS.proseDir, processProse);
     each(SELECTORS.dirBlock, processDirBlock);
     each(SELECTORS.leafBlock, processLeafInlines);
+    each(SELECTORS.elicit, processElicit);
     each(SELECTORS.container, processContainers);
     sweepInputs(root);
     return { work: work, truncated: truncated };

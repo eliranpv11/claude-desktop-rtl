@@ -114,20 +114,26 @@ test('payload is a silent no-op with no document (main-process safety)', () => {
 // layer must therefore process block leaves document-wide. This functional
 // stub-DOM proves a Hebrew <p> with NO ancestor class still gets processed.
 // ---------------------------------------------------------------------------
-function tagOf(el) {
-  return el.tagName;
-}
-function selMatchesTag(sel, tag) {
+// Match an element against a selector list supporting bare tags ("div, p"),
+// classes (".elicit"), and tag.class ("form.elicit") — enough for the surfaces.
+function elMatchesSel(el, sel) {
+  const classes = (el._attrs && el._attrs.class) ? el._attrs.class.split(/\s+/) : [];
   return sel
     .split(',')
     .map((s) => s.trim())
-    .some((s) => /^[a-z0-9]+$/i.test(s) && s.toLowerCase() === tag.toLowerCase());
+    .some((tok) => {
+      const m = tok.match(/^([a-z0-9]+)?(?:\.([a-z0-9_-]+))?$/i);
+      if (!m || (!m[1] && !m[2])) return false;
+      if (m[1] && m[1].toLowerCase() !== el.tagName.toLowerCase()) return false;
+      if (m[2] && classes.indexOf(m[2]) === -1) return false;
+      return true;
+    });
 }
-function makeEl(tag, text, children) {
+function makeEl(tag, text, children, cls) {
   const el = {
     nodeType: 1,
     tagName: tag.toUpperCase(),
-    _attrs: {},
+    _attrs: cls ? { class: cls } : {},
     childNodes: [],
     parentNode: null,
     style: {},
@@ -145,7 +151,7 @@ function makeEl(tag, text, children) {
     getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; },
     hasAttribute(k) { return k in this._attrs; },
     removeAttribute(k) { delete this._attrs[k]; },
-    matches(sel) { return selMatchesTag(sel, this.tagName); },
+    matches(sel) { return elMatchesSel(this, sel); },
     closest(sel) {
       let n = this;
       while (n) {
@@ -160,7 +166,7 @@ function makeEl(tag, text, children) {
       const walk = (node) => {
         for (const c of node.childNodes) {
           if (c.nodeType === 1) {
-            if (selMatchesTag(sel, c.tagName)) out.push(c);
+            if (elMatchesSel(c, sel)) out.push(c);
             walk(c);
           }
         }
@@ -308,4 +314,57 @@ test('global RTL: class-less sidebar containers (div/span/button) are tagged by 
   assert.ok(heBtn.hasAttribute('data-rtl-c'), 'Hebrew sidebar button tagged for RTL');
   assert.ok(!enTitle.hasAttribute('data-rtl-c'), 'English sidebar title left untagged (stays LTR)');
   assert.ok(!sidebar.hasAttribute('data-rtl-c'), 'non-leaf wrapper (has block children) not tagged');
+});
+
+test('ask/elicit widget: Hebrew question box gets dir=rtl, English stays LTR', () => {
+  const payload = buildPayload();
+
+  const heQ = makeEl('div', 'לאיזה כיוון לפנות?', null, 'elicit-question');
+  const heForm = makeEl('form', null, [heQ], 'elicit');
+  const enQ = makeEl('div', 'Which direction?', null, 'elicit-question');
+  const enForm = makeEl('form', null, [enQ], 'elicit');
+  const body = makeEl('body', null, [heForm, enForm]);
+
+  const de = {
+    _attrs: {},
+    setAttribute(k, v) { this._attrs[k] = String(v); },
+    getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; },
+    hasAttribute(k) { return k in this._attrs; },
+    appendChild() {},
+  };
+  const doc = {
+    documentElement: de,
+    head: { appendChild() {} },
+    body,
+    readyState: 'complete',
+    adoptedStyleSheets: undefined,
+    addEventListener() {},
+    querySelectorAll(sel) { return body.querySelectorAll(sel); },
+    querySelector() { return null; },
+    getElementById() { return null; },
+    createElement() { return makeEl('span'); },
+    createTreeWalker(root) {
+      const texts = [];
+      const walk = (n) => { for (const c of n.childNodes) { if (c.nodeType === 3) texts.push(c); else walk(c); } };
+      walk(root);
+      let i = 0;
+      return { nextNode() { return i < texts.length ? texts[i++] : null; } };
+    },
+    createDocumentFragment() { return makeEl('frag'); },
+    createTextNode(v) { return makeText(v); },
+  };
+  const win = {}; win.self = win; win.top = win;
+  class MO { observe() {} disconnect() {} }
+  const sandbox = {
+    document: doc, window: win,
+    navigator: { language: 'en-US', languages: ['en-US'] },
+    MutationObserver: MO, NodeFilter: { SHOW_TEXT: 4 },
+    Set, setTimeout() {}, requestAnimationFrame() {}, console,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(payload, sandbox);
+
+  assert.equal(heForm.getAttribute('dir'), 'rtl', 'Hebrew elicit form mirrored (dir=rtl)');
+  assert.ok(!enForm.getAttribute('dir'), 'English elicit form stays LTR (no dir set)');
 });
