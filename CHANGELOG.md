@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-06
+
 ### Added
 - **Global RTL across the whole app.** A new `processContainers` pass extends
   RTL beyond the chat bubble to every generic text container — sidebar chat
@@ -24,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slow `Expand-Archive`.
 
 ### Fixed
+- **Auto re-patch now actually fires after a Claude update.** The watcher never
+  ran: its task was registered `-AtLogOn` only (so it missed updates applied
+  while you were working) and pointed at the temp clone the installer extracts
+  (which Windows later cleaned up). It now stages a durable copy of the runtime
+  under `%ProgramData%\ClaudeRtl\app`, triggers at logon **and** every 5 minutes,
+  and re-applies only when the installed version actually changed. A failure
+  memory (max 3 attempts per version, then a 6-hour back-off, reset on a new
+  version) prevents an unpatchable update from restarting Claude every 5 minutes.
+  The task is also registered for the real interactive user and targets the
+  newest package when versions briefly coexist during an update.
 - **Silent watcher.** The auto re-patch check ran as `powershell.exe
   -WindowStyle Hidden`, which still flashed a console window every 5 minutes. It
   now runs through a `wscript` VBScript launcher that starts hidden from creation
