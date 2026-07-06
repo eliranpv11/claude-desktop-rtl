@@ -77,9 +77,13 @@ function Invoke-Elevate {
 # Install discovery: MSIX (Store) vs Squirrel (claude.ai .exe)
 # --------------------------------------------------------------------------
 function Find-ClaudeInstall {
-    # MSIX / Microsoft Store
+    # MSIX / Microsoft Store. Sort by real version descending so that during an
+    # update (when the old and new packages can momentarily coexist) we always
+    # target the NEWEST install -- the watcher must patch what will actually run.
     $pkg = Get-AppxPackage | Where-Object { $_.Name -eq 'Claude' -or $_.Name -like '*AnthropicClaude*' } |
-        Where-Object { $_.InstallLocation -like '*WindowsApps*' } | Select-Object -First 1
+        Where-Object { $_.InstallLocation -like '*WindowsApps*' } |
+        Sort-Object { try { [version]$_.Version } catch { [version]'0.0.0.0' } } -Descending |
+        Select-Object -First 1
     if ($pkg) {
         $appDir = Join-Path $pkg.InstallLocation 'app'
         if (-not (Test-Path $appDir)) { $appDir = $pkg.InstallLocation }
