@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows are never reversed. Verified in a real browser (Hebrew titles hug right,
   English stays left, the flex icon stays put).
 
+### Changed
+- **Faster install.** `install.ps1` now fetches only the three files the patcher
+  needs (`windows/patch.ps1`, `windows/inject.mjs`, `dist/payload.js`, ~100 KB)
+  directly from GitHub instead of downloading the whole-repo zip and running the
+  slow `Expand-Archive`.
+
+### Fixed
+- **Silent watcher.** The auto re-patch check ran as `powershell.exe
+  -WindowStyle Hidden`, which still flashed a console window every 5 minutes. It
+  now runs through a `wscript` VBScript launcher that starts hidden from creation
+  (SW_HIDE) — no window flash on the recurring no-op check, and child processes
+  of a real re-patch inherit the hidden console too. Verified: zero visible
+  windows when launched via `wscript`.
+
 ## [0.3.0] — 2026-07-04
 
 ### Added

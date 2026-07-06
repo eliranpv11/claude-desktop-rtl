@@ -567,7 +567,11 @@ function Copy-IfDifferent([string]$Src, [string]$Dst) {
 
 # Stage the patcher + injector + payload into a STABLE location so the watcher
 # never depends on the temp clone that install.ps1 extracts (Windows cleans TEMP,
-# which silently broke the old watcher). Returns the staged patch.ps1 path.
+# which silently broke the old watcher). Also writes a VBScript launcher that
+# starts the -Auto tick with a HIDDEN window from creation (SW_HIDE), which is
+# the only reliable way to stop the 5-minute tick from flashing a console window
+# -- 'powershell.exe -WindowStyle Hidden' still blinks a window before the style
+# applies. Returns the launcher .vbs path.
 function Copy-Runtime {
     if (-not (Test-Path $script:PayloadJs)) { throw "payload not built at $script:PayloadJs" }
     $dstWindows = Join-Path $script:AppHome 'windows'
@@ -577,7 +581,14 @@ function Copy-Runtime {
     Copy-IfDifferent (Join-Path $PSScriptRoot 'patch.ps1') $stagedPatch
     Copy-IfDifferent $script:InjectMjs (Join-Path $dstWindows 'inject.mjs')
     Copy-IfDifferent $script:PayloadJs (Join-Path $dstDist 'payload.js')
-    return $stagedPatch
+
+    # Hidden launcher: WScript.Shell.Run with intWindowStyle=0 => SW_HIDE at
+    # creation (no flash). Child cmd/node calls inherit this hidden console, so a
+    # real re-patch is silent too. bWaitOnReturn=False so the task action returns.
+    $vbsPath = Join-Path $dstWindows 'run-hidden.vbs'
+    $vbsLine = 'CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""' + $stagedPatch + '"" -Auto", 0, False'
+    Set-Content -Path $vbsPath -Value $vbsLine -Encoding ASCII
+    return $vbsPath
 }
 
 # The real interactively-logged-on user, which is who the watcher task must run
@@ -595,8 +606,8 @@ function Get-InteractiveUser {
 
 function Install-Watcher {
     Write-Step 'Installing auto re-patch watcher...'
-    # 1) Stage a durable copy of the runtime and point the task at it.
-    $target = Copy-Runtime
+    # 1) Stage a durable copy of the runtime + the hidden VBS launcher.
+    $vbs = Copy-Runtime
     Write-Ok "Runtime staged at $script:AppHome"
 
     # 2) Two triggers so an update is caught BOTH at logon AND mid-session:
@@ -608,8 +619,10 @@ function Install-Watcher {
             -RepetitionInterval (New-TimeSpan -Minutes 5) `
             -RepetitionDuration (New-TimeSpan -Days 3650)
 
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-        -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$target`" -Auto"
+    # Run the hidden VBS launcher (via wscript) instead of powershell directly, so
+    # the recurring tick never flashes a console window. wscript has no window and
+    # launches PowerShell already hidden (SW_HIDE) -- no blink even for a moment.
+    $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`""
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
     $principal = New-ScheduledTaskPrincipal -UserId (Get-InteractiveUser) `
@@ -621,7 +634,7 @@ function Install-Watcher {
 
     # 3) Kick it once now so a pending update is fixed immediately, not in 5 min.
     Start-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
-    Write-Ok "Watcher '$script:TaskName' installed (checks at logon + every 5 min)."
+    Write-Ok "Watcher '$script:TaskName' installed (silent; checks at logon + every 5 min)."
 }
 
 function Uninstall-Watcher {

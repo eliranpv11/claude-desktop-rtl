@@ -3,9 +3,10 @@
 #
 # Everything runs in ONE window. If the shell is not elevated, a single UAC
 # prompt opens exactly one elevated window that performs the whole install --
-# nothing cascades into extra windows. Downloads the WHOLE repository (engine
-# payload + injector + patcher) from your own GitHub and runs windows\patch.ps1
-# in-process. Nothing is fetched piecemeal and nothing comes from any other repo.
+# nothing cascades into extra windows. Fetches only the THREE files the patcher
+# needs (patcher + injector + prebuilt payload, ~100 KB) straight from your own
+# GitHub -- no whole-repo zip and no slow Expand-Archive -- then runs
+# windows\patch.ps1 in-process. Nothing comes from any other repo.
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -37,22 +38,31 @@ if (-not $isAdmin) {
     return
 }
 
-$Zip = Join-Path $env:TEMP 'claude-desktop-rtl.zip'
-$Dst = Join-Path $env:TEMP 'claude-desktop-rtl-src'
-$Url = 'https://github.com/eliranpv11/claude-desktop-rtl/archive/refs/heads/main.zip'
-
-Write-Host 'Downloading Claude RTL from GitHub...' -ForegroundColor Cyan
-Invoke-WebRequest -Uri $Url -OutFile $Zip -UseBasicParsing
+# Fetch only what the patcher needs, laid out as <root>\windows\ and <root>\dist\
+# so patch.ps1 resolves its payload/injector by its usual relative paths.
+$Dst  = Join-Path $env:TEMP 'claude-desktop-rtl-src'
+$Base = 'https://raw.githubusercontent.com/eliranpv11/claude-desktop-rtl/main'
 
 if (Test-Path $Dst) { Remove-Item $Dst -Recurse -Force }
-Expand-Archive -Path $Zip -DestinationPath $Dst -Force
+$null = New-Item -ItemType Directory -Force -Path (Join-Path $Dst 'windows'), (Join-Path $Dst 'dist')
 
-$Patch = Get-ChildItem -Path $Dst -Recurse -Filter 'patch.ps1' |
-    Where-Object { $_.FullName -match '[\\/]windows[\\/]patch\.ps1$' } |
-    Select-Object -First 1
-if (-not $Patch) { throw 'windows\patch.ps1 not found in the downloaded repository.' }
+$Files = @(
+    @{ Url = "$Base/windows/patch.ps1";  Path = Join-Path $Dst 'windows\patch.ps1'  },
+    @{ Url = "$Base/windows/inject.mjs"; Path = Join-Path $Dst 'windows\inject.mjs' },
+    @{ Url = "$Base/dist/payload.js";    Path = Join-Path $Dst 'dist\payload.js'    }
+)
+
+Write-Host 'Downloading Claude RTL (3 files)...' -ForegroundColor Cyan
+foreach ($f in $Files) {
+    Invoke-WebRequest -Uri $f.Url -OutFile $f.Path -UseBasicParsing
+    if (-not (Test-Path $f.Path) -or (Get-Item $f.Path).Length -eq 0) {
+        throw "download failed or empty: $($f.Url)"
+    }
+}
+
+$Patch = Join-Path $Dst 'windows\patch.ps1'
 
 # Run the patcher IN THIS SAME (already-elevated) window -- no new process, no
 # second window. patch.ps1 sees admin and never re-elevates.
-Write-Host "Running patcher: $($Patch.FullName)`n" -ForegroundColor Cyan
-& $Patch.FullName
+Write-Host "Running patcher: $Patch`n" -ForegroundColor Cyan
+& $Patch
