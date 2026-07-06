@@ -154,7 +154,7 @@ function makeEl(tag, text, children) {
       }
       return null;
     },
-    querySelector() { return null; },
+    querySelector(sel) { return this.querySelectorAll(sel)[0] || null; },
     querySelectorAll(sel) {
       const out = [];
       const walk = (node) => {
@@ -251,4 +251,61 @@ test('assistant-style Hebrew <p> with NO message-root class is processed (class-
   // CSS/JS can move its bar and padding to the right (box flip itself needs a
   // real browser's getComputedStyle; here we assert the direction decision).
   assert.equal(quote.getAttribute('dir'), 'rtl', 'Hebrew blockquote marked dir=rtl');
+});
+
+test('global RTL: class-less sidebar containers (div/span/button) are tagged by content', () => {
+  const payload = buildPayload();
+
+  // A sidebar OUTSIDE any message prose: Hebrew + English leaves, plus a
+  // non-leaf wrapper that has element children (must NOT be tagged).
+  const heTitle = makeEl('div', null, [makeText('שיחה על עברית')]); // leaf, RTL -> tag
+  const enTitle = makeEl('div', null, [makeText('New chat')]); // leaf, LTR -> no tag
+  const heBtn = makeEl('button', null, [makeText('צ׳אט חדש')]); // leaf, RTL -> tag
+  const sidebar = makeEl('div', null, [heTitle, enTitle, heBtn]); // has div children -> NOT leaf
+  const body = makeEl('body', null, [sidebar]);
+
+  const de = {
+    _attrs: {},
+    setAttribute(k, v) { this._attrs[k] = String(v); },
+    getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; },
+    hasAttribute(k) { return k in this._attrs; },
+    appendChild() {},
+  };
+  const doc = {
+    documentElement: de,
+    head: { appendChild() {} },
+    body,
+    readyState: 'complete',
+    adoptedStyleSheets: undefined,
+    addEventListener() {},
+    querySelectorAll(sel) { return body.querySelectorAll(sel); },
+    querySelector() { return null; },
+    getElementById() { return null; },
+    createElement() { return makeEl('span'); },
+    createTreeWalker(root) {
+      const texts = [];
+      const walk = (n) => { for (const c of n.childNodes) { if (c.nodeType === 3) texts.push(c); else walk(c); } };
+      walk(root);
+      let i = 0;
+      return { nextNode() { return i < texts.length ? texts[i++] : null; } };
+    },
+    createDocumentFragment() { return makeEl('frag'); },
+    createTextNode(v) { return makeText(v); },
+  };
+  const win = {}; win.self = win; win.top = win;
+  class MO { observe() {} disconnect() {} }
+  const sandbox = {
+    document: doc, window: win,
+    navigator: { language: 'en-US', languages: ['en-US'] },
+    MutationObserver: MO, NodeFilter: { SHOW_TEXT: 4 },
+    Set, setTimeout() {}, requestAnimationFrame() {}, console,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(payload, sandbox);
+
+  assert.ok(heTitle.hasAttribute('data-rtl-c'), 'Hebrew sidebar title tagged for RTL');
+  assert.ok(heBtn.hasAttribute('data-rtl-c'), 'Hebrew sidebar button tagged for RTL');
+  assert.ok(!enTitle.hasAttribute('data-rtl-c'), 'English sidebar title left untagged (stays LTR)');
+  assert.ok(!sidebar.hasAttribute('data-rtl-c'), 'non-leaf wrapper (has block children) not tagged');
 });

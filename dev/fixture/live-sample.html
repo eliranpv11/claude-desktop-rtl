@@ -15,6 +15,21 @@
     </style>
   </head>
   <body>
+    <!-- App chrome / sidebar: Hebrew that lives in div/span/a OUTSIDE any prose
+         (chat titles, section labels, buttons). This is what used to stay LTR. -->
+    <div id="sidebar" class="app-shell-nav" style="border:1px solid #ddd;padding:8px;max-width:280px">
+      <div id="side-section" class="sect" style="font-weight:600">שיחות אחרונות</div>
+      <a id="chat-a" class="chat-row" style="display:flex;align-items:center;gap:8px;text-decoration:none;color:#111">
+        <span id="chat-a-icon" class="ic" style="width:16px;height:16px;background:#c66;flex:0 0 auto">◆</span>
+        <span id="chat-a-title" class="ttl" style="flex:1">תכנון ארכיטקטורה למערכת</span>
+      </a>
+      <a id="chat-b" class="chat-row" style="display:flex;align-items:center;gap:8px;text-decoration:none;color:#111">
+        <span class="ic" style="width:16px;height:16px;background:#6c6;flex:0 0 auto">◆</span>
+        <span id="chat-b-title" class="ttl" style="flex:1">Debugging the API layer</span>
+      </a>
+      <button id="side-btn" class="btn" style="display:block;width:100%">צ'אט חדש</button>
+    </div>
+
     <!-- User bubble: the one stable anchor. -->
     <div data-testid="user-message">
       <p id="u1">מה ההבדל בין רשימה מקוננת לטבלה, ואיך זה נראה עם קצת English באמצע?</p>

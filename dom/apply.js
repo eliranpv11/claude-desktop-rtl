@@ -23,6 +23,7 @@ var arrowFlipOffsets = engine.arrowFlipOffsets;
 var relationRuns = engine.relationRuns;
 var signedNumberRuns = engine.signedNumberRuns;
 var codeBlockIsProse = engine.codeBlockIsProse;
+var hasRTL = engine.hasRTL;
 
 var SELECTORS = surfaces.SELECTORS;
 var inEditable = surfaces.inEditable;
@@ -320,6 +321,38 @@ var inLtrIsland = surfaces.inLtrIsland;
     return true;
   }
 
+  // ---- Generic text containers (sidebar, menus, buttons, dialogs) ----------
+  // This is what makes RTL GLOBAL instead of stopping at the chat bubble: the
+  // app's Hebrew outside markdown prose lives in div/span/button/a/label, which
+  // no prose pass ever touches. We tag only LEAF containers that actually carry
+  // RTL text; the CSS gives them `unicode-bidi:plaintext` + `text-align:start`,
+  // which right-aligns Hebrew and leaves English LTR WITHOUT changing the CSS
+  // `direction` — so flex rows (icon + label) never get reversed (verified).
+  function processContainers(el) {
+    if (!el || inEditable(el) || inNoInject(el) || inLtrIsland(el)) return false;
+    // Inside markdown prose? That block already self-directs via the CSS plaintext
+    // rule; skip so we don't double-handle message internals.
+    if (el.closest(SELECTORS.leafBlock)) return false;
+
+    var t = el.textContent || '';
+    // Cheap fingerprint check FIRST, so settled containers skip the (costlier)
+    // block-child query on every pass.
+    if (el.getAttribute('data-rtl-cdone') === fp(t)) return false;
+
+    // Only tag true text leaves. A container with block/structural descendants
+    // is not a leaf — its own leaves get tagged individually.
+    var isLeaf = true;
+    try { isLeaf = !el.querySelector(SELECTORS.containerHasBlock); } catch (e) { isLeaf = false; }
+
+    if (isLeaf && t.trim().length >= 1 && hasRTL(t)) {
+      el.setAttribute('data-rtl-c', '');
+    } else if (el.hasAttribute('data-rtl-c')) {
+      el.removeAttribute('data-rtl-c');
+    }
+    el.setAttribute('data-rtl-cdone', fp(t));
+    return true;
+  }
+
   // ---- Orchestrate one root, with a work cap -------------------------------
   function processRoot(root) {
     if (!root || root.nodeType !== 1) return { work: 0, truncated: false };
@@ -355,6 +388,7 @@ var inLtrIsland = surfaces.inLtrIsland;
     each(SELECTORS.proseDir, processProse);
     each(SELECTORS.dirBlock, processDirBlock);
     each(SELECTORS.leafBlock, processLeafInlines);
+    each(SELECTORS.container, processContainers);
     sweepInputs(root);
     return { work: work, truncated: truncated };
   }

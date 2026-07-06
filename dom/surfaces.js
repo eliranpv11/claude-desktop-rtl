@@ -27,6 +27,17 @@ const SELECTORS = {
   leafBlock:
     'p, li, h1, h2, h3, h4, h5, h6, blockquote, dt, dd, figcaption, caption, td, th',
 
+  // Generic text containers OUTSIDE markdown prose — sidebar chat titles, menu
+  // items, buttons, tab labels, dialogs. These carry the app's Hebrew that the
+  // prose pass never sees, which is why RTL used to stop at the chat bubble.
+  container: 'div, span, button, a, label, summary',
+
+  // If a container has any of these as a descendant it is NOT a text leaf; its
+  // own leaves get processed individually instead (prevents flipping a whole
+  // layout region off one stray RTL string).
+  containerHasBlock:
+    'div, p, ul, ol, h1, h2, h3, h4, h5, h6, pre, table, section, article, header, footer, nav, main, form, textarea, input',
+
   // Prose blocks eligible for the JS plaintext-override (Latin-opener Hebrew).
   proseDir: 'p, h1, h2, h3, h4, h5, h6, li, blockquote',
 

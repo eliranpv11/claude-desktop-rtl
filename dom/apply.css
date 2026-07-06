@@ -32,6 +32,17 @@
   overflow-wrap: anywhere;
 }
 
+/* Generic text containers OUTSIDE prose (sidebar chat titles, menu items,
+   buttons, tab labels, dialogs) that the JS tagged as carrying RTL. This is what
+   makes RTL global across the whole app. `unicode-bidi: plaintext` gives each
+   leaf its own content-driven base direction (English leaves stay LTR) and does
+   NOT set the `direction` property, so an icon+label flex row is never reversed;
+   `text-align: start` then right-aligns the Hebrew ones. */
+[data-rtl-c] {
+  unicode-bidi: plaintext !important;
+  text-align: start !important;
+}
+
 /* Code & rendered math NEVER reorder; isolate so neighbours can't bleed in. */
 pre,
 .code-block__code {

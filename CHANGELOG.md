@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Global RTL across the whole app.** A new `processContainers` pass extends
+  RTL beyond the chat bubble to every generic text container — sidebar chat
+  titles, section labels, menu items, buttons, tab labels, dialogs. It tags only
+  true text leaves that actually carry RTL, and the CSS applies
+  `unicode-bidi: plaintext` + `text-align: start`, which right-aligns Hebrew and
+  leaves English LTR **without** changing the CSS `direction`, so icon+label flex
+  rows are never reversed. Verified in a real browser (Hebrew titles hug right,
+  English stays left, the flex icon stays put).
+
 ## [0.3.0] — 2026-07-04
 
 ### Added
