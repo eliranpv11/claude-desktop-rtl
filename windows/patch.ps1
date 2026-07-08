@@ -222,8 +222,12 @@ function Stop-ClaudeProcs([object]$Claude) {
     }
 }
 
-function Stop-ClaudeStack([object]$Claude) {
-    Write-Step 'Halting Claude and cowork-svc...'
+# -NoStop: quiet mode used by the auto-watcher. It stops ONLY the guarded
+# background service (needed to re-sign claude.exe) and NEVER force-kills the
+# Claude UI. We only ever reach the quiet re-patch when the UI is already closed
+# (files unlocked), so there is nothing visible to disturb -- no interruption.
+function Stop-ClaudeStack([object]$Claude, [switch]$NoStop) {
+    if (-not $NoStop) { Write-Step 'Halting Claude and cowork-svc...' }
     $svc = Get-CoworkService
     if ($svc) {
         Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
@@ -232,18 +236,20 @@ function Stop-ClaudeStack([object]$Claude) {
             Start-Sleep -Seconds 1
         }
     }
+    if ($NoStop) { return }   # never kill the UI in quiet mode
     Stop-ClaudeProcs $Claude
     Start-Sleep -Seconds 2
     Write-Ok 'Stopped.'
 }
 
-function Start-ClaudeStack([object]$Claude) {
-    Write-Step 'Restarting cowork-svc and launching Claude...'
+function Start-ClaudeStack([object]$Claude, [switch]$NoStop) {
+    if (-not $NoStop) { Write-Step 'Restarting cowork-svc and launching Claude...' }
     $svc = Get-CoworkService
     if ($svc) {
-        try { Start-Service -Name $svc.Name -ErrorAction Stop; Write-Ok "Service $($svc.Name) started." }
-        catch { Write-Warn2 "Could not start $($svc.Name): $($_.Exception.Message)" }
+        try { Start-Service -Name $svc.Name -ErrorAction Stop; if (-not $NoStop) { Write-Ok "Service $($svc.Name) started." } }
+        catch { if (-not $NoStop) { Write-Warn2 "Could not start $($svc.Name): $($_.Exception.Message)" } }
     }
+    if ($NoStop) { return }   # leave the UI closed, as the user left it (no forced launch)
     try {
         if ($Claude.Model -eq 'MSIX' -and $Claude.Package) {
             Start-Process "shell:AppsFolder\$($Claude.Package.PackageFamilyName)!Claude" -ErrorAction Stop
@@ -252,6 +258,14 @@ function Start-ClaudeStack([object]$Claude) {
         }
         Write-Ok 'Claude launched.'
     } catch { Write-Warn2 "Launch Claude manually. ($($_.Exception.Message))" }
+}
+
+# Non-destructive lock test: try an exclusive open (open+close, writes nothing).
+# If Claude is running THIS install the file is held -> throws -> locked.
+function Test-AsarLocked([string]$Path) {
+    if (-not (Test-Path $Path)) { return $false }
+    try { $fs = [System.IO.File]::Open($Path, 'Open', 'ReadWrite', 'None'); $fs.Close(); return $false }
+    catch { return $true }
 }
 
 function Grant-Write([string]$Path) {
@@ -383,7 +397,7 @@ function New-FittingCert([int]$HoleSize, [string]$Subject) {
     throw "No self-signed cert small enough for the $HoleSize-byte hole."
 }
 
-function Invoke-CertDance([object]$Claude) {
+function Invoke-CertDance([object]$Claude, [switch]$NoStop) {
     if (-not (Test-Path $Claude.CoworkSvc)) { Write-Log 'No cowork-svc.exe; skipping cert dance.'; return }
     Write-Step 'Certificate swap + re-sign (cowork-svc guarded)...'
 
@@ -424,7 +438,7 @@ function Invoke-CertDance([object]$Claude) {
 
     # Re-sign claude.exe (its bytes changed from inject + fuse-off).
     Wait-FileUnlock $Claude.Exe
-    Invoke-ReSign $Claude.Exe $cert
+    Invoke-ReSign $Claude.Exe $cert -NoStop:$NoStop
 
     # Swap cert bytes in cowork-svc.exe (zero-padded to preserve size), re-sign.
     $newCert = $cert.RawData
@@ -433,22 +447,24 @@ function Invoke-CertDance([object]$Claude) {
     [Array]::Copy($padded, 0, $svcBytes, $start, $holeSize)
     Wait-FileUnlock $Claude.CoworkSvc
     [System.IO.File]::WriteAllBytes($Claude.CoworkSvc, $svcBytes)
-    Invoke-ReSign $Claude.CoworkSvc $cert
+    Invoke-ReSign $Claude.CoworkSvc $cert -NoStop:$NoStop
     Write-Ok 'cowork-svc.exe cert replaced and re-signed.'
 
     # Wipe the private key; keep the public cert in Root for verification.
     Remove-CertPrivateKey $cert.Thumbprint
 }
 
-function Invoke-ReSign([string]$Path, $Cert) {
+function Invoke-ReSign([string]$Path, $Cert, [switch]$NoStop) {
     for ($i = 1; $i -le 6; $i++) {
         try {
-            # A respawned claude.exe can re-lock the binary between phases; clear it
-            # and wait for the handle before signing.
-            Stop-ClaudeProcs $null
+            # A respawned claude.exe can re-lock the binary between phases. In
+            # interactive mode we clear it; in QUIET mode we NEVER force-kill --
+            # we just wait, and if it stays locked the attempt fails and the
+            # watcher retries later (once Claude is closed again).
+            if (-not $NoStop) { Stop-ClaudeProcs $null }
             Wait-FileUnlock $Path 8
             $r = Set-AuthenticodeSignature -FilePath $Path -Certificate $Cert -HashAlgorithm SHA256 -ErrorAction Stop
-            if ($r.Status -eq 'Valid') { Write-Ok "re-signed $(Split-Path $Path -Leaf)"; return }
+            if ($r.Status -eq 'Valid') { if (-not $NoStop) { Write-Ok "re-signed $(Split-Path $Path -Leaf)" }; return }
         } catch { Start-Sleep -Seconds 2 }
     }
     throw "Failed to re-sign $(Split-Path $Path -Leaf) after 6 attempts."
@@ -669,57 +685,62 @@ function Clear-Fail {
     if (Test-Path $script:FailFile) { Remove-Item $script:FailFile -Force -ErrorAction SilentlyContinue }
 }
 
-# Silent, gated re-patch for the scheduled task. Acts ONLY when the installed
-# Claude version differs from the version we last patched (an update reverted the
-# patch) -- so the 5-minute tick is a no-op cost until an update actually lands,
-# and Claude is never needlessly restarted.
+# NON-INTERRUPTIVE auto re-patch for the scheduled task. The cardinal rule
+# (matching the mature reference watchers): NEVER force-kill a running Claude.
+# A Claude update reverts our RTL payload; we restore it, but ONLY at a moment
+# that does not interrupt the user:
+#   1. Read-only marker scan of app.asar -- does the app already have RTL? If so,
+#      do nothing (this never opens Claude for write, never stops anything).
+#   2. If RTL is missing, an update wiped it. If Claude is RUNNING the new version
+#      its files are locked -> DEFER and retry later; RTL re-applies the next time
+#      Claude is closed and reopened. We do not kill it out from under the user.
+#   3. If Claude is closed (files unlocked) -> patch QUIETLY (-NoStop): touch only
+#      the background service, never launch the UI. The user sees nothing; RTL is
+#      there next time they open Claude.
 function Invoke-AutoPatch {
     $claude = Find-ClaudeInstall
     if (-not $claude) { Write-WatchLog 'auto: Claude not found'; return }
+    $ver = "$($claude.Version)"
 
-    $patchedVer = $null
-    if (Test-Path $script:StateFile) {
-        try { $patchedVer = (Get-Content $script:StateFile -Raw | ConvertFrom-Json).version } catch {}
+    # 1) Already patched? Read-only, non-blocking -- never touches Claude.
+    if (Test-AsarPatched $claude.Asar) { Clear-Fail; return }
+
+    # 2) Unpatched, but Claude is running the new version -> DEFER, never force-kill.
+    if ((Test-AsarLocked $claude.Asar) -or (Test-AsarLocked $claude.Exe)) {
+        Write-WatchLog "auto: v$ver RTL missing but Claude is running -> deferring (RTL re-applies after Claude is next closed)."
+        return
     }
-    $curVer = "$($claude.Version)"
 
-    # Pure version comparison: an MSIX/Squirrel update ALWAYS bumps the version
-    # and reverts our patch, so a mismatch is the exact "an update happened"
-    # signal. Matching versions => still patched (cheap no-op, no 36 MB asar read
-    # every tick), and this also respects a deliberate manual -Restore instead of
-    # fighting it back on.
-    if ($curVer -eq $patchedVer) { Clear-Fail; return }
-
-    # Back-off gate: if THIS version has already failed MaxAttempts times, stop
-    # thrashing (kill+relaunch every 5 min). Retry only once per CooldownHrs, and
-    # reset naturally when a genuinely new version arrives (fail.version changes).
+    # Back-off on a genuinely unpatchable version so we don't retry the (now quiet,
+    # UI-safe) patch forever. Resets when a newer version arrives.
     $fail = Get-Fail
-    if ($fail -and $fail.version -eq $curVer -and [int]$fail.count -ge $script:MaxAttempts) {
+    if ($fail -and $fail.version -eq $ver -and [int]$fail.count -ge $script:MaxAttempts) {
         $sinceHrs = try { ((Get-Date).ToUniversalTime() - [datetime]$fail.at).TotalHours } catch { 999 }
-        if ($sinceHrs -lt $script:CooldownHrs) { return }  # silent: don't kill Claude again yet
+        if ($sinceHrs -lt $script:CooldownHrs) { return }
     }
 
-    Write-WatchLog "auto: re-patch needed (installed=$curVer, patched=$patchedVer, priorFails=$(if($fail -and $fail.version -eq $curVer){$fail.count}else{0})). Applying..."
+    # 3) Unpatched AND Claude closed -> quiet re-patch (no UI kill, no UI launch).
+    Write-WatchLog "auto: v$ver RTL missing + Claude closed -> quiet re-patch..."
     try {
-        Install-Patch $claude
+        Install-Patch $claude -NoStop
         Clear-Fail
-        Write-WatchLog "auto: re-patched to $curVer OK"
+        Write-WatchLog "auto: quiet re-patch OK (v$ver); RTL applies on next Claude launch."
     } catch {
-        Set-Fail $curVer
-        Write-WatchLog "auto: re-patch FAILED: $($_.Exception.Message)"
+        Set-Fail $ver
+        Write-WatchLog "auto: quiet re-patch failed: $($_.Exception.Message)"
     }
 }
 
 # --------------------------------------------------------------------------
 # Install (atomic, rollback on any failure)
 # --------------------------------------------------------------------------
-function Install-Patch([object]$Claude) {
-    Write-Host "`n=== Installing Claude RTL ($($Claude.Model)) ===" -ForegroundColor Cyan
+function Install-Patch([object]$Claude, [switch]$NoStop) {
+    if (-not $NoStop) { Write-Host "`n=== Installing Claude RTL ($($Claude.Model)) ===" -ForegroundColor Cyan }
     if (-not (Test-Path $script:PayloadJs)) { throw "payload not built: $script:PayloadJs (run npm run build first)" }
     if (-not (Test-NodeTooling)) { throw 'Node.js is required (asar/fuses).' }
 
-    Stop-ClaudeStack $Claude
-    if ($Claude.Model -eq 'MSIX') { Write-Step 'Taking ownership...'; Grant-Write $Claude.AppDir }
+    Stop-ClaudeStack $Claude -NoStop:$NoStop
+    if ($Claude.Model -eq 'MSIX') { if (-not $NoStop) { Write-Step 'Taking ownership...' }; Grant-Write $Claude.AppDir }
 
     Backup-Originals $Claude
     # Always start from clean originals so re-runs patch pristine files.
@@ -741,17 +762,23 @@ function Install-Patch([object]$Claude) {
         Move-Item $newAsar $Claude.Asar -Force
         Write-Ok 'app.asar patched.'
 
-        Write-Step 'Phase 2: disable ASAR-integrity fuse on claude.exe'
+        if (-not $NoStop) { Write-Step 'Phase 2: disable ASAR-integrity fuse on claude.exe' }
         # Phase 1 (extract/inject/pack) is slow; a claude.exe can respawn and
-        # re-lock the binary mid-way. Re-kill THIS install's processes and wait for
-        # the handle to release on every attempt, then flip the fuse.
+        # re-lock the binary mid-way. In interactive mode we re-kill THIS install's
+        # processes and wait for the handle to release. In QUIET (-NoStop) mode we
+        # NEVER kill: if the exe becomes locked (the user opened Claude during the
+        # patch) we abort and let the next tick retry once Claude is closed again.
         $fuseOk = $false
         for ($i = 1; $i -le 8; $i++) {
-            Stop-ClaudeProcs $Claude
-            try { Wait-FileUnlock $Claude.Exe 10 }
-            catch { Write-Warn2 "claude.exe still locked (attempt $i); retrying..."; Start-Sleep -Seconds 2; continue }
+            if (-not $NoStop) {
+                Stop-ClaudeProcs $Claude
+                try { Wait-FileUnlock $Claude.Exe 10 }
+                catch { Write-Warn2 "claude.exe still locked (attempt $i); retrying..."; Start-Sleep -Seconds 2; continue }
+            } elseif (Test-AsarLocked $Claude.Exe) {
+                throw 'claude.exe became locked during quiet re-patch (Claude was opened); will retry when it is next closed.'
+            }
             if ((Invoke-Fuses @('write', '--app', "`"$($Claude.Exe)`"", 'EnableEmbeddedAsarIntegrityValidation=off')) -eq 0) { $fuseOk = $true; break }
-            Write-Warn2 "fuse write attempt $i failed; retrying..."
+            if (-not $NoStop) { Write-Warn2 "fuse write attempt $i failed; retrying..." }
             Start-Sleep -Seconds 2
         }
         if (-not $fuseOk) {
@@ -760,23 +787,22 @@ function Install-Patch([object]$Claude) {
         }
         Write-Ok 'ASAR-integrity fuse disabled.'
 
-        Write-Step 'Phase 3: certificate sync'
-        Invoke-CertDance $Claude
+        if (-not $NoStop) { Write-Step 'Phase 3: certificate sync' }
+        Invoke-CertDance $Claude -NoStop:$NoStop
 
         Save-State $Claude
-        Start-ClaudeStack $Claude
-        Write-Host "`n=== RTL INSTALLED SUCCESSFULLY ===`n" -ForegroundColor Green
+        Start-ClaudeStack $Claude -NoStop:$NoStop
+        if (-not $NoStop) { Write-Host "`n=== RTL INSTALLED SUCCESSFULLY ===`n" -ForegroundColor Green }
 
-        if (-not $Auto) {
+        if (-not $Auto -and -not $NoStop) {
             $ans = Read-Host 'Enable auto re-patch after Claude updates? (Y/n)'
             if ($ans -ne 'n' -and $ans -ne 'N') { Install-Watcher }
         }
     } catch {
-        Write-Err "Install failed: $($_.Exception.Message)"
-        Write-Warn2 'Rolling back to originals...'
+        if (-not $NoStop) { Write-Err "Install failed: $($_.Exception.Message)"; Write-Warn2 'Rolling back to originals...' }
         Restore-FromBackups $Claude -Rollback | Out-Null
         Remove-RtlCerts
-        Start-ClaudeStack $Claude
+        Start-ClaudeStack $Claude -NoStop:$NoStop
         throw "Installation failed and was rolled back. See messages above."
     } finally {
         if (Test-Path $work) { Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue }

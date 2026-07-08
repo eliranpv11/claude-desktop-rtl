@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-07-08
+
+### Fixed
+- **The auto re-patch no longer interrupts you.** The previous watcher
+  force-closed and relaunched Claude to re-apply RTL after an update — and every
+  failed attempt closed it too (its own `watcher.log` showed ~5 restarts in one
+  day on a daily-update beta channel). It now follows the mature reference
+  watcher's discipline and **never force-kills a running Claude**:
+  1. a **read-only** marker scan of `app.asar` decides if RTL is already present
+     (never opens Claude for write, never stops anything);
+  2. if RTL is missing but Claude is **running** the new version, it **defers**
+     and retries — RTL re-applies the next time Claude is closed and reopened;
+  3. only when Claude is **closed** does it patch, **quietly** (`-NoStop`):
+     touching only the background service, never launching the UI.
+  Every internal force-kill path (`Stop-ClaudeStack`, the Phase-2 fuse loop, and
+  the Phase-3 re-sign loop) is now gated so the quiet path cannot close a Claude
+  the user opened mid-patch.
+
 ## [0.4.1] — 2026-07-06
 
 ### Added
