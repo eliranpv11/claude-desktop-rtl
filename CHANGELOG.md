@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] — 2026-07-10
+
+### Fixed
+- **Hebrew lists that are heavy on English terms now flip too.** 0.4.4 only
+  caught lists whose raw character majority was Hebrew; a Hebrew instructional
+  list packed with English terms ("Install RTL", "watcher", "mutex", …) is often
+  majority-English by character count and stayed LTR. `listIsRtl` now decides
+  with several signals, in order: the list's own majority, a per-item vote, the
+  direction of the **preceding intro sentence**, and finally the surrounding
+  block — so an English-term-heavy list that follows a Hebrew sentence flips RTL.
+  A list with **no Hebrew at all** is still always left LTR. Verified in a real
+  browser with a 13-Hebrew / 121-English-character list (now uniformly right)
+  next to a pure-English control list (stays left).
+
 ## [0.4.4] — 2026-07-10
 
 ### Fixed

@@ -169,18 +169,46 @@ var inLtrIsland = surfaces.inLtrIsland;
   // Hebrew list, an item that happens to open with a number or English
   // ("7 (Disable...) — ...") must still align RTL like its siblings, or the list
   // looks half-flipped. Own direction wins if RTL; otherwise inherit the list's.
+  // Is this whole ul/ol an RTL (Hebrew) list? A Hebrew instructional list is
+  // often FULL of English technical terms ("Install RTL", "watcher", "mutex"),
+  // so neither first-strong nor a strong-char majority reliably says "Hebrew".
+  // The robust signal is the surrounding context: a list that contains Hebrew and
+  // sits inside a Hebrew message is a Hebrew list. Pure-LTR lists (no Hebrew at
+  // all) are always left alone.
+  function listIsRtl(list) {
+    if (!list) return false;
+    var lt = list.textContent || '';
+    if (!hasRTL(lt)) return false; // no Hebrew anywhere -> genuinely an LTR list
+    if (majority(lt) === 'rtl') return true; // the list itself is Hebrew-majority
+    // Per-item vote: a list whose items are mostly Hebrew wins even if English
+    // technical terms tip the raw character count.
+    var rtl = 0, ltr = 0, k = list.children, i;
+    for (i = 0; i < k.length; i++) {
+      if (k[i].tagName !== 'LI') continue;
+      var d = majority(k[i].textContent || '');
+      if (d === 'rtl') rtl++; else if (d === 'ltr') ltr++;
+    }
+    if (rtl > 0 && rtl >= ltr) return true;
+    // Context: an English-term-heavy Hebrew list usually follows a Hebrew intro
+    // sentence. Look at the nearest preceding block sibling with real text; if
+    // it reads RTL, this list belongs to that Hebrew context.
+    var prev = list.previousElementSibling;
+    while (prev) {
+      var pt = prev.textContent || '';
+      if (pt.trim().length >= 2) { if (majority(pt) === 'rtl') return true; break; }
+      prev = prev.previousElementSibling;
+    }
+    // Last resort: the surrounding block (parent) is Hebrew-majority.
+    var p = list.parentElement;
+    if (p && majority(p.textContent || '') === 'rtl') return true;
+    return false;
+  }
+
   function effectiveLiDir(li) {
     var own = resolvedDir(li.textContent || '');
     if (own === 'rtl') return 'rtl';
     var list = li.closest ? li.closest('ul, ol') : null;
-    if (list) {
-      var lt = list.textContent || '';
-      // The whole list's direction. resolvedDir is first-strong (a leading number
-      // or English term would wrongly make it LTR), so also accept a strong-char
-      // MAJORITY of RTL across all items -- that is what makes a Hebrew list treat
-      // its number/English-opener items as RTL too.
-      if (resolvedDir(lt) === 'rtl' || majority(lt) === 'rtl') return 'rtl';
-    }
+    if (listIsRtl(list)) return 'rtl';
     return own;
   }
 

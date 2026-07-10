@@ -147,6 +147,14 @@ function makeEl(tag, text, children, cls) {
       this._text = v;
       this.childNodes = [];
     },
+    get children() { return this.childNodes.filter((n) => n.nodeType === 1); },
+    get parentElement() { return this.parentNode && this.parentNode.nodeType === 1 ? this.parentNode : null; },
+    get previousElementSibling() {
+      if (!this.parentNode) return null;
+      const sibs = this.parentNode.childNodes.filter((n) => n.nodeType === 1);
+      const i = sibs.indexOf(this);
+      return i > 0 ? sibs[i - 1] : null;
+    },
     setAttribute(k, v) { this._attrs[k] = String(v); },
     getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; },
     hasAttribute(k) { return k in this._attrs; },
@@ -419,4 +427,56 @@ test('list-level direction: a number/English-opener item in a Hebrew list is for
   assert.ok(heLi1.hasAttribute('data-rtl-litem'), 'forced-RTL item marked for the CSS override');
   assert.equal(heLi2.getAttribute('dir'), 'rtl', 'pure-Hebrew item RTL');
   assert.ok(!enLi.hasAttribute('data-rtl-litem'), 'English-majority list item NOT forced RTL');
+});
+
+test('list-level direction: an English-term-heavy list following a Hebrew intro is RTL', () => {
+  const payload = buildPayload();
+
+  // The real case: a Hebrew instructional list so full of English terms that its
+  // character majority is English, but it follows a Hebrew intro sentence.
+  const intro = makeEl('p', 'כדי לתקן את זה, בצע את השלבים הבאים לפי הסדר המדויק:');
+  const li1 = makeEl('li', 'Run the Disable auto re-patch command first — מסיר watcher');
+  const li2 = makeEl('li', 'Then Install RTL and confirm with the Y prompt — לחץ כן');
+  const ol = makeEl('ol', null, [li1, li2]);
+  // A pure-English list (no Hebrew) in the same Hebrew context must STAY LTR.
+  const enOnly = makeEl('li', 'Open PowerShell as administrator');
+  const enOl = makeEl('ol', null, [enOnly]);
+  const body = makeEl('body', null, [intro, ol, enOl]);
+
+  const de = {
+    _attrs: {},
+    setAttribute(k, v) { this._attrs[k] = String(v); },
+    getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; },
+    hasAttribute(k) { return k in this._attrs; },
+    appendChild() {},
+  };
+  const doc = {
+    documentElement: de, head: { appendChild() {} }, body,
+    readyState: 'complete', adoptedStyleSheets: undefined, addEventListener() {},
+    querySelectorAll(sel) { return body.querySelectorAll(sel); },
+    querySelector() { return null; }, getElementById() { return null; },
+    createElement() { return makeEl('span'); },
+    createTreeWalker(root) {
+      const texts = [];
+      const walk = (n) => { for (const c of n.childNodes) { if (c.nodeType === 3) texts.push(c); else walk(c); } };
+      walk(root); let i = 0;
+      return { nextNode() { return i < texts.length ? texts[i++] : null; } };
+    },
+    createDocumentFragment() { return makeEl('frag'); }, createTextNode(v) { return makeText(v); },
+  };
+  const win = {}; win.self = win; win.top = win;
+  class MO { observe() {} disconnect() {} }
+  const sandbox = {
+    document: doc, window: win,
+    navigator: { language: 'en-US', languages: ['en-US'] },
+    MutationObserver: MO, NodeFilter: { SHOW_TEXT: 4 },
+    Set, setTimeout() {}, requestAnimationFrame() {}, console,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(payload, sandbox);
+
+  assert.ok(li1.hasAttribute('data-rtl-litem'), 'English-heavy item after a Hebrew intro is forced RTL (context)');
+  assert.ok(li2.hasAttribute('data-rtl-litem'), 'second English-heavy item forced RTL too (uniform)');
+  assert.ok(!enOnly.hasAttribute('data-rtl-litem'), 'a list with NO Hebrew stays LTR even in a Hebrew context');
 });
