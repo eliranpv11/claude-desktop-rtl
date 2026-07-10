@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] — 2026-07-10
+
+### Fixed
+- **Tables heavy on English terms now flip too.** A Hebrew check/result table
+  packed with English technical terms ("package.json", "build", "node", …) was
+  character-majority English, so its column ORDER stayed LTR (the first Hebrew
+  column stayed on the left and the whole table read the wrong way). The table
+  direction is now decided the same context-aware way as lists: the cells' own
+  majority, else a per-**column** vote (Hebrew columns vs English columns), else
+  the surrounding Hebrew context (a preceding heading / the parent message).
+  A table with no Hebrew at all always stays LTR. The context helper
+  (`surroundingIsRtl`) is now shared by the list and table passes. Verified in a
+  real browser: a Hebrew table whose characters are majority-English now flips
+  its column order (the Hebrew label column moves to the right) while a
+  pure-English control table stays LTR.
+
 ## [0.4.5] — 2026-07-10
 
 ### Fixed

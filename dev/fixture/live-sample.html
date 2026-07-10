@@ -80,6 +80,27 @@
           <tr><td>בטא</td><td>250</td></tr>
         </tbody>
       </table>
+
+      <!-- The REAL failing case: a Hebrew check/result table so full of English
+           technical terms that its character majority is English. Preceded by a
+           Hebrew heading, like in the app. -->
+      <h3 id="tblhdr">סיכום הבדיקה המקיפה</h3>
+      <table id="tbl2">
+        <thead><tr><th id="t2h1">בדיקה</th><th id="t2h2">תוצאה</th></tr></thead>
+        <tbody>
+          <tr><td id="t2c1">עקביות גרסאות</td><td id="t2v1">package.json = tag = payload stamp = 0.4.5</td></tr>
+          <tr><td id="t2c2">dist מסונכרן</td><td id="t2v2">build fresh, matches source</td></tr>
+          <tr><td id="t2c3">טסטים</td><td id="t2v3">53/53 passing on node 18/20/22</td></tr>
+        </tbody>
+      </table>
+
+      <!-- Control: a pure-English table must STAY LTR (no Hebrew anywhere). -->
+      <table id="entbl">
+        <thead><tr><th id="et2h1">Check</th><th id="et2h2">Result</th></tr></thead>
+        <tbody>
+          <tr><td id="et2c1">version consistency</td><td>all match</td></tr>
+        </tbody>
+      </table>
     </div>
 
     <!-- The "ask" / elicitation widget (multiple-choice question box), matching

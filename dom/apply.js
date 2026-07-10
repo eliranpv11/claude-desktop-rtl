@@ -132,9 +132,21 @@ var inLtrIsland = surfaces.inLtrIsland;
       }
     }
 
-    // Layer 1: table column ORDER follows the majority direction of all cells.
-    var td = majority(all);
-    if (td === 'rtl') {
+    // Layer 1: table column ORDER. A Hebrew table crammed with English technical
+    // terms is char-majority English, so majority(all) alone leaves it LTR (first
+    // column on the left). Decide like lists: own majority, else a per-column vote
+    // (Hebrew columns vs English columns), else the surrounding Hebrew context.
+    // Guarded by hasRTL so a genuinely English table never flips.
+    var wantRtl = majority(all) === 'rtl';
+    if (!wantRtl && hasRTL(all)) {
+      var rtlCols = 0, ltrCols = 0;
+      for (var vc = 0; vc < cols.length; vc++) {
+        var vd = majority(cols[vc] || '');
+        if (vd === 'rtl') rtlCols++; else if (vd === 'ltr') ltrCols++;
+      }
+      wantRtl = (rtlCols > 0 && rtlCols >= ltrCols) || surroundingIsRtl(table);
+    }
+    if (wantRtl) {
       table.setAttribute('dir', 'rtl');
       table.setAttribute(TDIR, '1');
     } else if (table.getAttribute(TDIR) === '1') {
@@ -175,6 +187,20 @@ var inLtrIsland = surfaces.inLtrIsland;
   // The robust signal is the surrounding context: a list that contains Hebrew and
   // sits inside a Hebrew message is a Hebrew list. Pure-LTR lists (no Hebrew at
   // all) are always left alone.
+  // Is the region SURROUNDING an element RTL? An English-term-heavy Hebrew list
+  // or table usually follows a Hebrew intro/heading and sits in a Hebrew message;
+  // that context is the reliable "this belongs to a Hebrew document" signal.
+  function surroundingIsRtl(el) {
+    var prev = el.previousElementSibling;
+    while (prev) {
+      var pt = prev.textContent || '';
+      if (pt.trim().length >= 2) return majority(pt) === 'rtl';
+      prev = prev.previousElementSibling;
+    }
+    var p = el.parentElement;
+    return !!(p && majority(p.textContent || '') === 'rtl');
+  }
+
   function listIsRtl(list) {
     if (!list) return false;
     var lt = list.textContent || '';
@@ -189,19 +215,7 @@ var inLtrIsland = surfaces.inLtrIsland;
       if (d === 'rtl') rtl++; else if (d === 'ltr') ltr++;
     }
     if (rtl > 0 && rtl >= ltr) return true;
-    // Context: an English-term-heavy Hebrew list usually follows a Hebrew intro
-    // sentence. Look at the nearest preceding block sibling with real text; if
-    // it reads RTL, this list belongs to that Hebrew context.
-    var prev = list.previousElementSibling;
-    while (prev) {
-      var pt = prev.textContent || '';
-      if (pt.trim().length >= 2) { if (majority(pt) === 'rtl') return true; break; }
-      prev = prev.previousElementSibling;
-    }
-    // Last resort: the surrounding block (parent) is Hebrew-majority.
-    var p = list.parentElement;
-    if (p && majority(p.textContent || '') === 'rtl') return true;
-    return false;
+    return surroundingIsRtl(list); // Hebrew intro / message context
   }
 
   function effectiveLiDir(li) {

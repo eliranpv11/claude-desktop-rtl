@@ -148,6 +148,8 @@ function makeEl(tag, text, children, cls) {
       this.childNodes = [];
     },
     get children() { return this.childNodes.filter((n) => n.nodeType === 1); },
+    get rows() { return this.querySelectorAll('tr'); },
+    get cells() { return this.children.filter((c) => c.tagName === 'TD' || c.tagName === 'TH'); },
     get parentElement() { return this.parentNode && this.parentNode.nodeType === 1 ? this.parentNode : null; },
     get previousElementSibling() {
       if (!this.parentNode) return null;
@@ -479,4 +481,59 @@ test('list-level direction: an English-term-heavy list following a Hebrew intro 
   assert.ok(li1.hasAttribute('data-rtl-litem'), 'English-heavy item after a Hebrew intro is forced RTL (context)');
   assert.ok(li2.hasAttribute('data-rtl-litem'), 'second English-heavy item forced RTL too (uniform)');
   assert.ok(!enOnly.hasAttribute('data-rtl-litem'), 'a list with NO Hebrew stays LTR even in a Hebrew context');
+});
+
+test('table column order: a Hebrew table heavy on English terms flips (context-aware)', () => {
+  const payload = buildPayload();
+
+  const mkRow = (a, b) => makeEl('tr', null, [makeEl('td', a), makeEl('td', b)]);
+  // Hebrew check/result table, char-majority English, after a Hebrew heading.
+  const heading = makeEl('h3', 'סיכום הבדיקה המקיפה שנעשתה על כל הריפו');
+  const heTbl = makeEl('table', null, [
+    makeEl('tr', null, [makeEl('th', 'בדיקה'), makeEl('th', 'תוצאה')]),
+    mkRow('עקביות גרסאות', 'package.json = tag = payload stamp = 0.4.6'),
+    mkRow('טסטים', '53 passing on node 18/20/22'),
+  ]);
+  // Pure-English table must stay LTR.
+  const enTbl = makeEl('table', null, [
+    makeEl('tr', null, [makeEl('th', 'Check'), makeEl('th', 'Result')]),
+    mkRow('version', 'all match'),
+  ]);
+  const body = makeEl('body', null, [heading, heTbl, enTbl]);
+
+  const de = {
+    _attrs: {},
+    setAttribute(k, v) { this._attrs[k] = String(v); },
+    getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; },
+    hasAttribute(k) { return k in this._attrs; },
+    appendChild() {},
+  };
+  const doc = {
+    documentElement: de, head: { appendChild() {} }, body,
+    readyState: 'complete', adoptedStyleSheets: undefined, addEventListener() {},
+    querySelectorAll(sel) { return body.querySelectorAll(sel); },
+    querySelector() { return null; }, getElementById() { return null; },
+    createElement() { return makeEl('span'); },
+    createTreeWalker(root) {
+      const texts = [];
+      const walk = (n) => { for (const c of n.childNodes) { if (c.nodeType === 3) texts.push(c); else walk(c); } };
+      walk(root); let i = 0;
+      return { nextNode() { return i < texts.length ? texts[i++] : null; } };
+    },
+    createDocumentFragment() { return makeEl('frag'); }, createTextNode(v) { return makeText(v); },
+  };
+  const win = {}; win.self = win; win.top = win;
+  class MO { observe() {} disconnect() {} }
+  const sandbox = {
+    document: doc, window: win,
+    navigator: { language: 'en-US', languages: ['en-US'] },
+    MutationObserver: MO, NodeFilter: { SHOW_TEXT: 4 },
+    Set, setTimeout() {}, requestAnimationFrame() {}, console,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(payload, sandbox);
+
+  assert.equal(heTbl.getAttribute('dir'), 'rtl', 'English-term-heavy Hebrew table gets RTL column order');
+  assert.ok(!enTbl.getAttribute('dir'), 'pure-English table stays LTR');
 });
