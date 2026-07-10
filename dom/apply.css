@@ -115,6 +115,15 @@ table[dir='rtl'] {
 li[dir='rtl'] {
   list-style-position: inside;
 }
+/* A list item forced RTL by the list-level decision (even one that opens with a
+   number or English): make the explicit RTL beat the base `unicode-bidi:
+   plaintext`, so it right-aligns uniformly with its siblings. `isolate` keeps
+   embedded English/number runs readable inside the RTL item. */
+li[data-rtl-litem] {
+  unicode-bidi: isolate !important;
+  direction: rtl !important;
+  text-align: right !important;
+}
 /* Task-list checkboxes sit before the text on the right in RTL. */
 li[dir='rtl'] input[type='checkbox'] {
   margin-left: 0.5em;

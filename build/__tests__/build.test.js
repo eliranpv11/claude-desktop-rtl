@@ -368,3 +368,55 @@ test('ask/elicit widget: Hebrew question box gets dir=rtl, English stays LTR', (
   assert.equal(heForm.getAttribute('dir'), 'rtl', 'Hebrew elicit form mirrored (dir=rtl)');
   assert.ok(!enForm.getAttribute('dir'), 'English elicit form stays LTR (no dir set)');
 });
+
+test('list-level direction: a number/English-opener item in a Hebrew list is forced RTL', () => {
+  const payload = buildPayload();
+
+  // Hebrew-majority list; item 1 opens with a number + English but must still go
+  // RTL for uniformity. Item 2 is pure Hebrew.
+  const heLi1 = makeEl('li', '7 (Disable auto re-patch) — מסיר את הווטשר הזה שדורס עלינו בעברית מלאה');
+  const heLi2 = makeEl('li', 'בסוף הפעל מחדש את השירות בעברית מלאה וברורה לגמרי');
+  const heOl = makeEl('ol', null, [heLi1, heLi2]);
+  // English-majority list must NOT be forced RTL.
+  const enLi = makeEl('li', 'Open PowerShell as administrator and run it');
+  const enOl = makeEl('ol', null, [enLi]);
+  const body = makeEl('body', null, [heOl, enOl]);
+
+  const de = {
+    _attrs: {},
+    setAttribute(k, v) { this._attrs[k] = String(v); },
+    getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; },
+    hasAttribute(k) { return k in this._attrs; },
+    appendChild() {},
+  };
+  const doc = {
+    documentElement: de, head: { appendChild() {} }, body,
+    readyState: 'complete', adoptedStyleSheets: undefined, addEventListener() {},
+    querySelectorAll(sel) { return body.querySelectorAll(sel); },
+    querySelector() { return null; }, getElementById() { return null; },
+    createElement() { return makeEl('span'); },
+    createTreeWalker(root) {
+      const texts = [];
+      const walk = (n) => { for (const c of n.childNodes) { if (c.nodeType === 3) texts.push(c); else walk(c); } };
+      walk(root); let i = 0;
+      return { nextNode() { return i < texts.length ? texts[i++] : null; } };
+    },
+    createDocumentFragment() { return makeEl('frag'); }, createTextNode(v) { return makeText(v); },
+  };
+  const win = {}; win.self = win; win.top = win;
+  class MO { observe() {} disconnect() {} }
+  const sandbox = {
+    document: doc, window: win,
+    navigator: { language: 'en-US', languages: ['en-US'] },
+    MutationObserver: MO, NodeFilter: { SHOW_TEXT: 4 },
+    Set, setTimeout() {}, requestAnimationFrame() {}, console,
+  };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(payload, sandbox);
+
+  assert.equal(heLi1.getAttribute('dir'), 'rtl', 'number/English-opener item in a Hebrew list forced RTL');
+  assert.ok(heLi1.hasAttribute('data-rtl-litem'), 'forced-RTL item marked for the CSS override');
+  assert.equal(heLi2.getAttribute('dir'), 'rtl', 'pure-Hebrew item RTL');
+  assert.ok(!enLi.hasAttribute('data-rtl-litem'), 'English-majority list item NOT forced RTL');
+});

@@ -165,8 +165,28 @@ var inLtrIsland = surfaces.inLtrIsland;
   }
 
   // ---- Prose override: the one place JS stamps dir on a paragraph -----------
+  // Decide a list item's direction from the LIST, not just itself: in a
+  // Hebrew list, an item that happens to open with a number or English
+  // ("7 (Disable...) — ...") must still align RTL like its siblings, or the list
+  // looks half-flipped. Own direction wins if RTL; otherwise inherit the list's.
+  function effectiveLiDir(li) {
+    var own = resolvedDir(li.textContent || '');
+    if (own === 'rtl') return 'rtl';
+    var list = li.closest ? li.closest('ul, ol') : null;
+    if (list) {
+      var lt = list.textContent || '';
+      // The whole list's direction. resolvedDir is first-strong (a leading number
+      // or English term would wrongly make it LTR), so also accept a strong-char
+      // MAJORITY of RTL across all items -- that is what makes a Hebrew list treat
+      // its number/English-opener items as RTL too.
+      if (resolvedDir(lt) === 'rtl' || majority(lt) === 'rtl') return 'rtl';
+    }
+    return own;
+  }
+
   function processProse(block) {
     if (!block || inEditable(block)) return false;
+    if (block.tagName === 'LI') return false; // li direction is owned by processDirBlock (list-aware)
     var t = block.textContent || '';
     if (plaintextOverrideDir(t) === 'rtl') {
       block.setAttribute('dir', 'rtl');
@@ -223,12 +243,19 @@ var inLtrIsland = surfaces.inLtrIsland;
   function processDirBlock(el) {
     if (!el || inEditable(el)) return false;
     var t = el.textContent || '';
-    var rtl = resolvedDir(t) === 'rtl';
+    // A list item follows the list's direction (uniform); other blocks use own.
+    var rtl = (el.tagName === 'LI') ? (effectiveLiDir(el) === 'rtl') : (resolvedDir(t) === 'rtl');
     if (rtl) {
       if (el.getAttribute(DBLK) === fp(t) && el.getAttribute('dir') === 'rtl') return false;
       el.setAttribute('dir', 'rtl');
       el.setAttribute(DBLK, fp(t));
-      if (el.tagName === 'LI') el.style.listStylePosition = 'inside';
+      if (el.tagName === 'LI') {
+        el.style.listStylePosition = 'inside';
+        // Mark it so CSS overrides the base `unicode-bidi: plaintext` and the
+        // explicit RTL actually wins (right-align + marker on the right) even for
+        // a number/English-opener item.
+        el.setAttribute('data-rtl-litem', '');
+      }
       flipBox(el);
       return true;
     }
@@ -236,7 +263,7 @@ var inLtrIsland = surfaces.inLtrIsland;
     if (el.getAttribute(DBLK) != null) {
       if (el.getAttribute('dir') === 'rtl') el.removeAttribute('dir');
       el.removeAttribute(DBLK);
-      if (el.tagName === 'LI') el.style.listStylePosition = '';
+      if (el.tagName === 'LI') { el.style.listStylePosition = ''; el.removeAttribute('data-rtl-litem'); }
       unflipBox(el);
       return true;
     }

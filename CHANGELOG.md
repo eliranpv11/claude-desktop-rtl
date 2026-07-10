@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-07-10
+
+### Fixed
+- **Hebrew lists now flip uniformly.** A list item that opened with a number or
+  an English term (e.g. "7 (Disable auto re-patch) — …") stayed left-aligned
+  while its Hebrew siblings went right, so an ordered list looked half-flipped.
+  A list item's direction is now resolved from the **whole list** (a strong-char
+  RTL majority across all items), not just the item's own first-strong character,
+  so number/English-opener items align RTL with their siblings. English-majority
+  lists are left untouched. Because the base `unicode-bidi: plaintext` rule
+  otherwise defeats an explicit `dir` on such an item, forced-RTL items get a
+  `data-rtl-litem` marker whose CSS (`unicode-bidi: isolate; direction: rtl;
+  text-align: right`) makes the RTL actually win while keeping embedded English
+  runs readable. Verified in a real browser (Hebrew list uniform right, English
+  list stays left, all other surfaces unchanged).
+
 ## [0.4.3] — 2026-07-10
 
 ### Fixed
