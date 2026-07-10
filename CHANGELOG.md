@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-07-10
+
+### Fixed
+- **Concurrency: the patch could end up UNPATCHED even when it "succeeded".** An
+  interactive install briefly closes Claude, which wakes the watcher; the two
+  then ran at the same time and stepped on each other (one runs
+  `Restore-FromBackups`/unpatch while the other injects), so the asar was left
+  without the payload despite both reporting success. Diagnosed live on a machine
+  that had updated to 1.20186 and kept reverting. Fixes:
+  - A **cross-process mutex** (`Global\ClaudeRtlPatchLock`) serializes all patch
+    operations — exactly one at a time. The watcher yields immediately if a patch
+    is already running (logged as a defer, not a failure); an interactive install
+    waits for the other to finish.
+  - Under the lock the watcher **re-checks** whether RTL is already present and
+    bails if so, so it can never undo a patch another run just applied.
+  - An interactive install now **pauses the watcher scheduled task** for the
+    duration of the patch as a second layer of protection.
+
 ## [0.4.2] — 2026-07-08
 
 ### Fixed

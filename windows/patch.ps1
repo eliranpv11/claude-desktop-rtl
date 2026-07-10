@@ -726,8 +726,14 @@ function Invoke-AutoPatch {
         Clear-Fail
         Write-WatchLog "auto: quiet re-patch OK (v$ver); RTL applies on next Claude launch."
     } catch {
-        Set-Fail $ver
-        Write-WatchLog "auto: quiet re-patch failed: $($_.Exception.Message)"
+        # A lock contention (a manual install is running) is a DEFER, not a
+        # failure -- don't count it toward the back-off.
+        if ($_.Exception.Message -like '*another patch is in progress*') {
+            Write-WatchLog 'auto: deferred (another patch operation is running).'
+        } else {
+            Set-Fail $ver
+            Write-WatchLog "auto: quiet re-patch failed: $($_.Exception.Message)"
+        }
     }
 }
 
@@ -738,6 +744,27 @@ function Install-Patch([object]$Claude, [switch]$NoStop) {
     if (-not $NoStop) { Write-Host "`n=== Installing Claude RTL ($($Claude.Model)) ===" -ForegroundColor Cyan }
     if (-not (Test-Path $script:PayloadJs)) { throw "payload not built: $script:PayloadJs (run npm run build first)" }
     if (-not (Test-NodeTooling)) { throw 'Node.js is required (asar/fuses).' }
+
+    # Cross-process lock: exactly ONE patch operation at a time. Without this, a
+    # scheduled watcher tick and a manual install race -- an interactive install
+    # briefly closes Claude, which wakes the watcher, and the two step on each
+    # other (one runs Restore-FromBackups/unpatch while the other patches),
+    # leaving the asar UNPATCHED even though both report success. The watcher
+    # yields immediately; an interactive install waits for the other to finish.
+    $mtx = New-Object System.Threading.Mutex($false, 'Global\ClaudeRtlPatchLock')
+    $owned = $false
+    try { $owned = $mtx.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
+    if (-not $owned) {
+        if ($NoStop) { $mtx.Dispose(); throw 'another patch is in progress; deferring quiet re-patch.' }
+        Write-Warn2 'Another patch is already running; waiting for it to finish...'
+        try { $owned = $mtx.WaitOne(180000) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
+        if (-not $owned) { $mtx.Dispose(); throw 'timed out waiting for the other patch to finish.' }
+    }
+    try {
+    # Under the lock, another run may have just applied RTL -- do not undo it.
+    if ($NoStop -and (Test-AsarPatched $Claude.Asar)) { return }
+    # Pause the watcher task so a scheduled tick cannot collide with this install.
+    if (-not $NoStop) { Disable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null }
 
     Stop-ClaudeStack $Claude -NoStop:$NoStop
     if ($Claude.Model -eq 'MSIX') { if (-not $NoStop) { Write-Step 'Taking ownership...' }; Grant-Write $Claude.AppDir }
@@ -806,6 +833,11 @@ function Install-Patch([object]$Claude, [switch]$NoStop) {
         throw "Installation failed and was rolled back. See messages above."
     } finally {
         if (Test-Path $work) { Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    } finally {
+        if (-not $NoStop) { Enable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null }
+        try { $mtx.ReleaseMutex() } catch {}
+        $mtx.Dispose()
     }
 }
 
