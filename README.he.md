@@ -7,6 +7,7 @@
 [![CI](https://github.com/eliranpv11/claude-desktop-rtl/actions/workflows/ci.yml/badge.svg)](https://github.com/eliranpv11/claude-desktop-rtl/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/eliranpv11/claude-desktop-rtl?sort=semver)](https://github.com/eliranpv11/claude-desktop-rtl/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%C2%B7%20Browser-informational)](#-התקנה)
 
 [English](README.md) · [**עברית**](README.he.md)
 
@@ -91,6 +92,32 @@ irm https://raw.githubusercontent.com/eliranpv11/claude-desktop-rtl/main/install
 - **ה-CSS עושה כ-85%.** הכלל `unicode-bidi: plaintext` על כל בלוק טקסט גורם לכל בלוק לקבוע את כיוון הבסיס שלו מהתו החזק הראשון שלו. אנגלית נשארת LTR, עברית מתהפכת ל-RTL — בלי שאף מיכל מתהפך בכוח.
 - **ה-JS עושה רק את מה שה-CSS לא יכול:** מבודד מתמטיקה כך ש-`3 < 5` לא מתהפך, הופך חצים ויזואלית, מעביר עיטור של רשימות וציטוטים לצד הנכון, ומטפל ב-streaming בלי הבהובים — הכל בלי לשנות את הטקסט שלך.
 - **בדסקטופ**, אותו מנוע מוזרק לחבילת ה-renderer של Claude; ה-fuse של בדיקת התקינות (ASAR integrity) מכובה כדי שהחבילה המתוקנת תיטען, ובמקום שבו `cowork-svc` שומר על `claude.exe` הבינאריים נחתמים מחדש עם תעודה מקומית. ראו את **[SECURITY.md](SECURITY.md)** למודל האמון המלא.
+
+## 🗂️ ארכיטקטורה
+
+</div>
+
+```
+engine/     Pure, DOM-free bidi decision engine (unit-tested, no browser needed)
+  ranges    Unicode script classification (astral-safe, 40+ RTL blocks)
+  numbers   EN/AN digits, signed-run detection ("-5" vs Hebrew prefix "ל-15")
+  detect    first-strong + majority; fallback is ALWAYS null, never forced RTL
+  math      LaTeX vs currency ($5.99 stays text, $\frac{}{}$ is math)
+  arrows    horizontal arrows needing a visual RTL flip (math/LTR-context aware)
+  relations mirrored relations ("3 < 5" isolated so it never reads backwards)
+  code      real code vs Hebrew prose mis-fenced as code
+dom/        The thin runtime that applies the engine's decisions to Claude's UI
+  apply.css declarative core (unicode-bidi:plaintext per leaf block)
+  surfaces  single source of truth for Claude's selectors
+  apply.js  streaming-settle observer, input guards, tables, structural flip
+build/      Bundles engine+DOM+CSS into one self-contained IIFE (dist/payload.js)
+windows/    The Windows patcher
+  inject.mjs byte-exact injector (spares the main entry, keeps native modules)
+  patch.ps1  install / restore / status / verify / watch — MSIX + Squirrel
+dev/        Real-browser fixture for verifying the DOM/CSS layer
+```
+
+<div dir="rtl">
 
 ## ✅ אימות והסרה
 

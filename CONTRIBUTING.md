@@ -41,6 +41,16 @@ names), so most Claude updates need no change. If direction stops applying:
 2. Adjust `dom/surfaces.js` (the single source of truth for selectors) and/or the
    guards, add a fixture case under `dev/fixture/`, and re-verify in a real browser.
 
+## Testing gaps / roadmap
+
+- **Extract `dom/apply.js` pure helpers into a testable module.** The
+  DOM-free voting logic buried in the runtime — `listIsRtl`, `surroundingIsRtl`,
+  and the table/column direction vote — is currently only exercised in a real
+  browser. It should be lifted into its own module so it can be unit-tested with
+  `node:test` (like `engine/`) and covered end-to-end via jsdom or Playwright.
+  This is a larger, flagship-runtime change: propose it separately and keep it
+  isolated from unrelated edits.
+
 ## Versioning & releases
 
 - [Semantic Versioning](https://semver.org). Bump `package.json` `version` and add
