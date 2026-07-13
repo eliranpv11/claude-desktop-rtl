@@ -94,6 +94,20 @@
         </tbody>
       </table>
 
+      <!-- The user's exact failing case: a Hebrew "owner | blocker" table. The
+           owner column (col 0) is short Hebrew; the blocker column (col 1) is
+           English-heavy. Owner column renders on the right (RTL) but its Hebrew
+           was hugging LEFT instead of right. -->
+      <h3 id="thdr3">מה נשאר עד ש"אפשר להפעיל"</h3>
+      <table id="tbl3">
+        <thead><tr><th id="t3ha">בעלים</th><th id="t3hb">חסם</th></tr></thead>
+        <tbody>
+          <tr><td id="t3owner1">אתה</td><td id="t3block1">השבתת מפתח Firebase 6a05ac שדלף — IAM</td></tr>
+          <tr><td id="t3owner2">צריך גישת Firebase (הצעת להשיג)</td><td>פריסת Firestore rules + indexes</td></tr>
+          <tr><td id="t3owner3">אתה (חיוב)</td><td>Redis תוכנית בתשלום noeviction</td></tr>
+        </tbody>
+      </table>
+
       <!-- Control: a pure-English table must STAY LTR (no Hebrew anywhere). -->
       <table id="entbl">
         <thead><tr><th id="et2h1">Check</th><th id="et2h2">Result</th></tr></thead>

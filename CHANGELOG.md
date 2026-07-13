@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9] — 2026-07-13
+
+### Fixed
+- **Hebrew table cells no longer hug the left.** When a table did not flip to
+  `dir="rtl"`, its cells kept `direction: ltr`, so a Hebrew cell's
+  `text-align: start` resolved to **left** (`unicode-bidi: plaintext` sets the
+  content order but not the `direction` property). `processTable` now sets an
+  **explicit `dir` on every cell** from its column's direction (`rtl`/`ltr`, or
+  `auto` for a mixed column), so each cell aligns correctly and uniformly per
+  column, independent of the table's own direction. A CSS safety net also forces
+  the **descendants** of a directional cell to follow it, in case the app wraps
+  cell content in a child that carries its own `text-align` (e.g. a Tailwind
+  `text-left`). Verified in a real browser: Hebrew cells right, English cells
+  left, wrapped content forced to follow, English-only tables untouched.
+
 ## [0.4.8] — 2026-07-13
 
 ### Security

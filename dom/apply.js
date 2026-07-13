@@ -154,7 +154,12 @@ var inLtrIsland = surfaces.inLtrIsland;
       table.removeAttribute(TDIR);
     }
 
-    // Layer 2b: per-column ALIGNMENT follows each column's own majority.
+    // Layer 2b: per-column ALIGNMENT. Set an EXPLICIT dir on every cell from its
+    // column's direction. This is the load-bearing fix for the reported bug: a
+    // Hebrew cell with no dir sits at `text-align: start` under `direction: ltr`
+    // (unicode-bidi:plaintext does NOT change `direction`), so it hugs the LEFT
+    // even when the table did not flip to dir=rtl. An explicit dir makes `start`
+    // resolve correctly, uniformly per column, independent of the table's dir.
     for (var cc = 0; cc < cols.length; cc++) {
       var cdir = majority(cols[cc] || '');
       for (var rr = 0; rr < grid.length; rr++) {
@@ -162,13 +167,15 @@ var inLtrIsland = surfaces.inLtrIsland;
         if (!cell) continue;
         if (cdir === 'rtl' || cdir === 'ltr') cell.setAttribute('data-rtl-col', cdir);
         else if (cell.getAttribute('data-rtl-col')) cell.removeAttribute('data-rtl-col');
-        // Layer 2a override: a Latin-opener majority-RTL cell needs an explicit dir.
-        if (plaintextOverrideDir(cell.textContent || '') === 'rtl') {
+        // Explicit per-cell dir so text-align:start resolves right/left correctly:
+        //   RTL column, or a Latin/number-opener but majority-Hebrew cell -> rtl
+        //   LTR column -> ltr ; otherwise follow the cell's own first-strong (auto)
+        if (cdir === 'rtl' || plaintextOverrideDir(cell.textContent || '') === 'rtl') {
           cell.setAttribute('dir', 'rtl');
-        } else if (cell.getAttribute('dir') === 'rtl' && !cell.hasAttribute('data-author-dir')) {
-          // only clear a dir we would have set (never an author's) — cells aren't
-          // author-dir'd in practice, but guard anyway.
-          if (resolvedDir(cell.textContent || '') !== 'rtl') cell.removeAttribute('dir');
+        } else if (cdir === 'ltr') {
+          cell.setAttribute('dir', 'ltr');
+        } else {
+          cell.setAttribute('dir', 'auto');
         }
       }
     }

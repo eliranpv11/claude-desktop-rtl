@@ -82,11 +82,26 @@ table[dir='rtl'] {
   direction: rtl !important;
 }
 
-/* Per-column alignment (Layer 2b): each column hugs its own language's edge. */
-:is(td, th)[data-rtl-col='rtl'] {
+/* Per-column alignment (Layer 2b): each column hugs its own language's edge.
+   We key off BOTH the explicit per-cell dir (set by JS) and the column marker so
+   a Hebrew cell aligns right even when the table itself did not flip to dir=rtl. */
+:is(td, th)[data-rtl-col='rtl'],
+:is(td, th)[dir='rtl'] {
   text-align: right !important;
 }
-:is(td, th)[data-rtl-col='ltr'] {
+:is(td, th)[data-rtl-col='ltr'],
+:is(td, th)[dir='ltr'] {
+  text-align: left !important;
+}
+/* The app may wrap a cell's content in a child that carries its own text-align
+   (e.g. a Tailwind `text-left`), which would override the cell. Force the
+   descendants of a directional cell to follow the cell's side. */
+:is(td, th)[data-rtl-col='rtl'] *,
+:is(td, th)[dir='rtl'] * {
+  text-align: right !important;
+}
+:is(td, th)[data-rtl-col='ltr'] *,
+:is(td, th)[dir='ltr'] * {
   text-align: left !important;
 }
 

@@ -536,4 +536,8 @@ test('table column order: a Hebrew table heavy on English terms flips (context-a
 
   assert.equal(heTbl.getAttribute('dir'), 'rtl', 'English-term-heavy Hebrew table gets RTL column order');
   assert.ok(!enTbl.getAttribute('dir'), 'pure-English table stays LTR');
+  // Each cell in the Hebrew (first) column gets an explicit dir=rtl so its text
+  // aligns right even if the table itself had not flipped (the reported bug).
+  assert.equal(heTbl.rows[1].cells[0].getAttribute('dir'), 'rtl', 'Hebrew column cell gets explicit dir=rtl');
+  assert.equal(enTbl.rows[1].cells[0].getAttribute('dir'), 'ltr', 'English column cell gets dir=ltr');
 });
