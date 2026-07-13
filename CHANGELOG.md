@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-07-10
+
+### Security
+- **Stop accumulating self-signed "Anthropic, PBC" certificates.** `Remove-RtlCerts`
+  was only called on rollback/restore, so every *successful* install/update minted
+  a new self-signed cert in the Trusted Root store and left the previous ones
+  behind (a user found 20). Now every install purges all prior Claude RTL certs
+  **before** minting the new one, so exactly one exists at a time. `Remove-RtlCerts`
+  also **deletes the private-key container** (previously `Remove-Item` orphaned the
+  CNG key on disk) and now catches certs that lost our FriendlyName by matching a
+  self-signed cert with an Anthropic-cloned subject — while sparing the real,
+  CA-issued Anthropic certificate and unrelated certs (verified against mock
+  certs). Added `-CleanCerts` to purge leftovers without a full install, and a
+  `RTL certs:` count line in `-Status`.
+
 ## [0.4.6] — 2026-07-10
 
 ### Fixed

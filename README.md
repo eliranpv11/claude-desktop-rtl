@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File .\windows\patch.ps1              # inte
 
 **Requirements:** Windows 10/11, [Node.js](https://nodejs.org/) in `PATH` (used for `@electron/asar` + `@electron/fuses` via `npx`), and administrator rights for a Microsoft-Store (MSIX) install.
 
-**Flags:** `-Install` · `-Restore` · `-Status` · `-Verify` · `-Preflight` · `-Watch` · `-Unwatch`
+**Flags:** `-Install` · `-Restore` · `-Status` · `-Verify` · `-Preflight` · `-Watch` · `-Unwatch` · `-CleanCerts`
 
 > ⚠️ **Windows only** for the desktop app. 🍎 **macOS:** try [toboly's](https://github.com/toboly/claude-desktop-rtl-patch-mac) or [soguy's](https://github.com/soguy/claude-desktop-rtl-mac) mac patches *(not tested here; use at your own risk)*.
 

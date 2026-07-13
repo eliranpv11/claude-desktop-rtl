@@ -71,7 +71,7 @@ irm https://raw.githubusercontent.com/eliranpv11/claude-desktop-rtl/main/install
 
 **דרישות:** Windows 10/11, [Node.js](https://nodejs.org/) ב-`PATH` (משמש ל-`@electron/asar` ו-`@electron/fuses` דרך `npx`), והרשאות מנהל להתקנת חנות Microsoft (MSIX).
 
-**דגלים:** `-Install` · `-Restore` · `-Status` · `-Verify` · `-Preflight` · `-Watch` · `-Unwatch`
+**דגלים:** `-Install` · `-Restore` · `-Status` · `-Verify` · `-Preflight` · `-Watch` · `-Unwatch` · `-CleanCerts`
 
 > ⚠️ **Windows בלבד** לאפליקציית הדסקטופ. 🍎 **למשתמשי macOS:** נסו את הפאצ'ים של [toboly](https://github.com/toboly/claude-desktop-rtl-patch-mac) או [soguy](https://github.com/soguy/claude-desktop-rtl-mac) *(לא נבדקו כאן; על אחריותכם)*.
 

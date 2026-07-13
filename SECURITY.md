@@ -20,10 +20,18 @@ On a Microsoft-Store (MSIX) install it will:
   This project generates it locally, uses it only to sign these two binaries, and
   **wipes the private key** immediately (only the public certificate is retained
   for verification). Even so, adding any root certificate widens your trust base.
+- **Exactly one** such certificate ever exists at a time. Every install/update
+  **purges all prior Claude RTL certificates — and their private-key containers —
+  before minting the new one**, so re-installs never accumulate fake
+  "Anthropic, PBC" certs in your trust store. (Earlier versions did not purge on a
+  successful install; if you patched with one of those, run
+  `windows\patch.ps1 -CleanCerts` once to remove the leftovers.)
 - These changes are **not authorized by Anthropic** and may violate their Terms of
   Service. Use at your own risk.
 - The patch is undone by `windows\patch.ps1 -Restore`, which restores the validated
-  original backups and removes the certificate from the store.
+  original backups and removes the certificate (and its private key) from the store.
+  `windows\patch.ps1 -CleanCerts` removes just the certificates; `-Status` shows how
+  many are currently present (should be 1 when patched, 0 when restored).
 
 ### Safety measures built in
 

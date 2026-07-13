@@ -26,6 +26,7 @@ param(
     [switch]$Preflight,
     [switch]$Watch,
     [switch]$Unwatch,
+    [switch]$CleanCerts,
     [switch]$Auto
 )
 
@@ -431,10 +432,15 @@ function Invoke-CertDance([object]$Claude, [switch]$NoStop) {
         if ($sig -and $sig.SignerCertificate) { $subject = $sig.SignerCertificate.Subject }
     } catch {}
 
+    # Purge any PRIOR Claude RTL certs (and their private keys) BEFORE minting the
+    # new one, so re-installs/updates never pile up fake "Anthropic, PBC" certs in
+    # the trust store. Must run before New-FittingCert (the new cert shares the
+    # FriendlyName, so cleaning after would delete the one we are about to use).
+    Remove-RtlCerts
     $cert = New-FittingCert -HoleSize $holeSize -Subject $subject
     $root = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
     $root.Open('ReadWrite'); $root.Add($cert); $root.Close()
-    Write-Ok 'Self-signed cert added to Trusted Root.'
+    Write-Ok 'Self-signed cert added to Trusted Root (prior ones purged).'
 
     # Re-sign claude.exe (its bytes changed from inject + fuse-off).
     Wait-FileUnlock $Claude.Exe
@@ -493,12 +499,35 @@ function Remove-CertPrivateKey([string]$Thumb) {
     } catch { Write-Warn2 "Could not wipe private key: $($_.Exception.Message)" }
 }
 
+# Remove EVERY Claude RTL self-signed cert from both stores, and delete the
+# private-key container too (Remove-Item alone orphans the CNG key on disk). Also
+# catches certs that lost our FriendlyName by matching a self-signed cert whose
+# subject clones Anthropic's -- safe, because the REAL Anthropic code-signing
+# cert is CA-issued (Issuer != Subject) and never lands in these machine stores.
 function Remove-RtlCerts {
+    $count = 0
     foreach ($store in @('My', 'Root')) {
         Get-ChildItem "Cert:\LocalMachine\$store" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FriendlyName -eq 'Claude_RTL_SelfSigned' } |
-            Remove-Item -Force -ErrorAction SilentlyContinue
+            Where-Object {
+                $_.FriendlyName -eq 'Claude_RTL_SelfSigned' -or
+                ($_.Issuer -eq $_.Subject -and $_.Subject -match 'Anthropic')
+            } |
+            ForEach-Object {
+                if ($_.HasPrivateKey) {
+                    try {
+                        $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($_)
+                        if ($rsa -is [System.Security.Cryptography.RSACng]) { $rsa.Key.Delete() }
+                        else {
+                            $ec = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($_)
+                            if ($ec -is [System.Security.Cryptography.ECDsaCng]) { $ec.Key.Delete() }
+                        }
+                    } catch {}
+                }
+                Remove-Item $_.PSPath -Force -ErrorAction SilentlyContinue
+                $count++
+            }
     }
+    if ($count -gt 0) { Write-Log "Removed $count prior Claude RTL certificate(s) (+ private keys)." }
 }
 
 # --------------------------------------------------------------------------
@@ -544,6 +573,20 @@ function Get-Status {
     Write-Host ("  backup asar   : {0}" -f (Test-Path "$($claude.Asar)$script:BakSuffix"))
     $watch = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
     Write-Host ("  auto re-patch : {0}" -f ([bool]$watch))
+    Write-Host ("  RTL certs     : {0} (should be 1 when patched, 0 when restored)" -f (Get-RtlCertCount))
+}
+
+# Count our self-signed certs across both machine stores (accumulation check).
+function Get-RtlCertCount {
+    $n = 0
+    foreach ($store in @('My', 'Root')) {
+        $n += (Get-ChildItem "Cert:\LocalMachine\$store" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.FriendlyName -eq 'Claude_RTL_SelfSigned' -or
+                ($_.Issuer -eq $_.Subject -and $_.Subject -match 'Anthropic')
+            } | Measure-Object).Count
+    }
+    return $n
 }
 
 function Test-Verify {
@@ -912,6 +955,14 @@ function Invoke-Action {
     } catch { Write-Err $_.Exception.Message }
 }
 
+if ($CleanCerts) {
+    if (-not (Test-Admin)) { Invoke-Elevate -PassArgs @('-CleanCerts') }
+    Write-Step 'Purging accumulated Claude RTL certificates...'
+    $before = Get-RtlCertCount
+    Remove-RtlCerts
+    Write-Ok "Done. RTL certs: $before -> $(Get-RtlCertCount)."
+    return
+}
 if ($Preflight) { Invoke-Preflight | Out-Null; return }
 if ($Status)    { Get-Status; return }
 if ($Verify)    { Test-Verify | Out-Null; return }
