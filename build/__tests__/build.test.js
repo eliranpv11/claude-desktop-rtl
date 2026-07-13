@@ -541,3 +541,41 @@ test('table column order: a Hebrew table heavy on English terms flips (context-a
   assert.equal(heTbl.rows[1].cells[0].getAttribute('dir'), 'rtl', 'Hebrew column cell gets explicit dir=rtl');
   assert.equal(enTbl.rows[1].cells[0].getAttribute('dir'), 'ltr', 'English column cell gets dir=ltr');
 });
+
+test('table column alignment: a Hebrew column peppered with English terms aligns RIGHT uniformly', () => {
+  const payload = buildPayload();
+
+  // Column 0: Hebrew sentences with English terms; some cells start with English
+  // ("Redis…") but the column reads as Hebrew -> whole column RTL (uniform right).
+  // Column 1: pure English data (no Hebrew) -> stays LTR (left).
+  const mk = (a, b) => makeEl('tr', null, [makeEl('td', a), makeEl('td', b)]);
+  const tbl = makeEl('table', null, [
+    makeEl('tr', null, [makeEl('th', 'חסם'), makeEl('th', 'ערך')]),
+    mk('השבתת מפתח Firebase שדלף', 'package.json = 1'),
+    mk('Redis תוכנית בתשלום noeviction', 'build fresh'),
+    mk('deploy מ-HEAD להרצה', '53 passing'),
+  ]);
+  const body = makeEl('body', null, [makeEl('p', 'טבלת סטטוס בעברית מלאה וברורה'), tbl]);
+
+  const de = { _attrs: {}, setAttribute(k, v) { this._attrs[k] = String(v); }, getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; }, hasAttribute(k) { return k in this._attrs; }, appendChild() {} };
+  const doc = {
+    documentElement: de, head: { appendChild() {} }, body, readyState: 'complete', adoptedStyleSheets: undefined, addEventListener() {},
+    querySelectorAll(sel) { return body.querySelectorAll(sel); }, querySelector() { return null; }, getElementById() { return null; },
+    createElement() { return makeEl('span'); },
+    createTreeWalker(root) { const t = []; const w = (n) => { for (const c of n.childNodes) { if (c.nodeType === 3) t.push(c); else w(c); } }; w(root); let i = 0; return { nextNode() { return i < t.length ? t[i++] : null; } }; },
+    createDocumentFragment() { return makeEl('frag'); }, createTextNode(v) { return makeText(v); },
+  };
+  const win = {}; win.self = win; win.top = win;
+  class MO { observe() {} disconnect() {} }
+  const sandbox = { document: doc, window: win, navigator: { language: 'en-US', languages: ['en-US'] }, MutationObserver: MO, NodeFilter: { SHOW_TEXT: 4 }, Set, setTimeout() {}, requestAnimationFrame() {}, console };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(payload, sandbox);
+
+  // Whole Hebrew column right, including the cell that starts with "Redis".
+  assert.equal(tbl.rows[1].cells[0].getAttribute('dir'), 'rtl', 'Hebrew-first cell RTL');
+  assert.equal(tbl.rows[2].cells[0].getAttribute('dir'), 'rtl', 'English-first cell in a Hebrew column is ALSO RTL (uniform)');
+  assert.equal(tbl.rows[0].cells[0].getAttribute('dir'), 'rtl', 'Hebrew column header RTL');
+  // Pure-English data column stays LTR.
+  assert.equal(tbl.rows[1].cells[1].getAttribute('dir'), 'ltr', 'pure-English data column stays LTR');
+});

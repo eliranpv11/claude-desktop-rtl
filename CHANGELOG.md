@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.11] — 2026-07-13
+
+### Fixed
+- **A Hebrew table column full of English terms now right-aligns uniformly.** In
+  an RTL table, a column of Hebrew sentences peppered with English technical
+  terms ("Firestore", "deploy", "ALL-PASS") was **character-majority English**,
+  so the per-column alignment left it hugging the **left** — header and all rows
+  — while the neighbouring Hebrew column looked correct. Column alignment is now
+  decided by the **reading direction of the column's data cells** (first-strong),
+  not raw character count: a column with any Hebrew-reading cell is a Hebrew
+  column and right-aligns **uniformly** (including its English-first cells and
+  its header), while a column of purely English data still stays left. Verified
+  in a real browser with the exact reported table (every blocker-column cell now
+  right; the owner column and English-only tables unchanged).
+
 ## [0.4.10] — 2026-07-13
 
 ### Fixed
