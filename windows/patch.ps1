@@ -438,9 +438,16 @@ function Invoke-CertDance([object]$Claude, [switch]$NoStop) {
     # FriendlyName, so cleaning after would delete the one we are about to use).
     Remove-RtlCerts
     $cert = New-FittingCert -HoleSize $holeSize -Subject $subject
+    # Add a PUBLIC-ONLY copy to Trusted Root -- NEVER the key-bearing cert. Adding
+    # the private-key cert makes LocalMachine\Root persist its own copy of the key,
+    # which then survives the My-store key wipe (leaving a usable "Anthropic, PBC"
+    # signing key trusted machine-wide). The re-sign below still uses the key from
+    # the My-store cert; the chain validates against this trusted public copy.
+    $pub = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 (, $cert.RawData)
+    try { $pub.FriendlyName = 'Claude_RTL_SelfSigned' } catch {}
     $root = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
-    $root.Open('ReadWrite'); $root.Add($cert); $root.Close()
-    Write-Ok 'Self-signed cert added to Trusted Root (prior ones purged).'
+    $root.Open('ReadWrite'); $root.Add($pub); $root.Close()
+    Write-Ok 'Public cert added to Trusted Root (no private key in the store; prior certs purged).'
 
     # Re-sign claude.exe (its bytes changed from inject + fuse-off).
     Wait-FileUnlock $Claude.Exe
@@ -504,13 +511,14 @@ function Remove-CertPrivateKey([string]$Thumb) {
 # catches certs that lost our FriendlyName by matching a self-signed cert whose
 # subject clones Anthropic's -- safe, because the REAL Anthropic code-signing
 # cert is CA-issued (Issuer != Subject) and never lands in these machine stores.
-function Remove-RtlCerts {
+function Remove-RtlCerts([string]$KeepThumbprint) {
     $count = 0
     foreach ($store in @('My', 'Root')) {
         Get-ChildItem "Cert:\LocalMachine\$store" -ErrorAction SilentlyContinue |
             Where-Object {
-                $_.FriendlyName -eq 'Claude_RTL_SelfSigned' -or
-                ($_.Issuer -eq $_.Subject -and $_.Subject -match 'Anthropic')
+                ($_.FriendlyName -eq 'Claude_RTL_SelfSigned' -or
+                 ($_.Issuer -eq $_.Subject -and $_.Subject -match 'Anthropic')) -and
+                ($KeepThumbprint -eq '' -or $_.Thumbprint -ne $KeepThumbprint)
             } |
             ForEach-Object {
                 if ($_.HasPrivateKey) {
@@ -958,9 +966,17 @@ function Invoke-Action {
 if ($CleanCerts) {
     if (-not (Test-Admin)) { Invoke-Elevate -PassArgs @('-CleanCerts') }
     Write-Step 'Purging accumulated Claude RTL certificates...'
+    # If Claude is currently patched, KEEP the cert that actually signs claude.exe
+    # (removing it would break cowork-svc's verification); purge only the leftovers.
+    $keep = ''
+    $c = Find-ClaudeInstall
+    if ($c -and (Test-Path $c.Exe)) {
+        try { $keep = (Get-AuthenticodeSignature $c.Exe).SignerCertificate.Thumbprint } catch {}
+    }
     $before = Get-RtlCertCount
-    Remove-RtlCerts
-    Write-Ok "Done. RTL certs: $before -> $(Get-RtlCertCount)."
+    Remove-RtlCerts $keep
+    $kept = if ($keep) { ' (kept the active signing cert)' } else { '' }
+    Write-Ok "Done. RTL certs: $before -> $(Get-RtlCertCount)$kept."
     return
 }
 if ($Preflight) { Invoke-Preflight | Out-Null; return }

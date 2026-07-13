@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] — 2026-07-13
+
+### Security
+- **No private key is ever left in the Trusted Root store.** Even with the 0.4.7
+  purge, the cert that landed in `LocalMachine\Root` still reported
+  `HasPrivateKey = True`: adding the key-bearing certificate to Root makes Windows
+  persist its own copy of the key there, which survived the `My`-store key wipe —
+  leaving a usable "Anthropic, PBC" signing key trusted machine-wide. Now only a
+  **public-only copy** (rebuilt from the certificate's raw bytes) is added to
+  Root; signing still uses the private key from the `My` store, whose key is then
+  deleted. Verified that a raw-bytes copy has `HasPrivateKey = False` with the
+  same thumbprint (so the signature still chains to a trusted root).
+- `-CleanCerts` is now safe on a live install: it keeps the certificate that
+  currently signs `claude.exe` (removing it would break `cowork-svc` verification)
+  and purges only the leftovers.
+
 ## [0.4.7] — 2026-07-10
 
 ### Security

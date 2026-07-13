@@ -17,9 +17,12 @@ On a Microsoft-Store (MSIX) install it will:
 ### Trust implications you are accepting
 
 - A self-signed certificate in your Trusted Root store is trusted machine-wide.
-  This project generates it locally, uses it only to sign these two binaries, and
-  **wipes the private key** immediately (only the public certificate is retained
-  for verification). Even so, adding any root certificate widens your trust base.
+  This project generates it locally and uses it only to sign these two binaries.
+  Only a **public-only copy** is ever placed in the Trusted Root store — the
+  private key is used from the (personal) `My` store for signing and then
+  **deleted** (key container and all), so **no usable private key for that
+  certificate is ever left trusted machine-wide**. Even so, adding any root
+  certificate widens your trust base.
 - **Exactly one** such certificate ever exists at a time. Every install/update
   **purges all prior Claude RTL certificates — and their private-key containers —
   before minting the new one**, so re-installs never accumulate fake
