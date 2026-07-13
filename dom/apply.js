@@ -47,6 +47,17 @@ var inLtrIsland = surfaces.inLtrIsland;
     return String((text || '').length);
   }
 
+  // Guarded attribute writes: only touch the DOM when the value actually changes.
+  // This keeps re-processing free and, crucially, means our OWN writes don't churn
+  // the attribute MutationObserver (which watches for React stripping our attrs).
+  function setAttr(el, name, val) {
+    if (!el || !el.getAttribute) return;
+    if (el.getAttribute(name) !== val) el.setAttribute(name, val);
+  }
+  function delAttr(el, name) {
+    if (el && el.hasAttribute && el.hasAttribute(name)) el.removeAttribute(name);
+  }
+
   // ---- CSS injection (survives React clearing a <style> node) --------------
   function injectCss() {
     try {
@@ -119,7 +130,11 @@ var inLtrIsland = surfaces.inLtrIsland;
   function processTable(table) {
     if (!table || inEditable(table)) return false;
     var t = table.textContent || '';
-    if (table.getAttribute(DONE) === fp(t)) return false;
+    // NOTE: no fingerprint short-circuit here. React re-renders strip the dir we
+    // set on cells WITHOUT changing the text, so a content fingerprint would make
+    // us skip and never re-apply -- the "correct for a split second then reverts"
+    // bug. Recomputing a table is cheap; setAttr() below only writes when a value
+    // actually changed, so re-running is free when nothing was reverted.
 
     var grid = tableCells(table);
     var all = '';
@@ -147,11 +162,11 @@ var inLtrIsland = surfaces.inLtrIsland;
       wantRtl = (rtlCols > 0 && rtlCols >= ltrCols) || surroundingIsRtl(table);
     }
     if (wantRtl) {
-      table.setAttribute('dir', 'rtl');
-      table.setAttribute(TDIR, '1');
+      setAttr(table, 'dir', 'rtl');
+      setAttr(table, TDIR, '1');
     } else if (table.getAttribute(TDIR) === '1') {
-      table.removeAttribute('dir');
-      table.removeAttribute(TDIR);
+      delAttr(table, 'dir');
+      delAttr(table, TDIR);
     }
 
     // Layer 2b: per-column ALIGNMENT. Set an EXPLICIT dir on every cell from its
@@ -165,21 +180,20 @@ var inLtrIsland = surfaces.inLtrIsland;
       for (var rr = 0; rr < grid.length; rr++) {
         var cell = grid[rr][cc];
         if (!cell) continue;
-        if (cdir === 'rtl' || cdir === 'ltr') cell.setAttribute('data-rtl-col', cdir);
-        else if (cell.getAttribute('data-rtl-col')) cell.removeAttribute('data-rtl-col');
+        if (cdir === 'rtl' || cdir === 'ltr') setAttr(cell, 'data-rtl-col', cdir);
+        else delAttr(cell, 'data-rtl-col');
         // Explicit per-cell dir so text-align:start resolves right/left correctly:
         //   RTL column, or a Latin/number-opener but majority-Hebrew cell -> rtl
         //   LTR column -> ltr ; otherwise follow the cell's own first-strong (auto)
         if (cdir === 'rtl' || plaintextOverrideDir(cell.textContent || '') === 'rtl') {
-          cell.setAttribute('dir', 'rtl');
+          setAttr(cell, 'dir', 'rtl');
         } else if (cdir === 'ltr') {
-          cell.setAttribute('dir', 'ltr');
+          setAttr(cell, 'dir', 'ltr');
         } else {
-          cell.setAttribute('dir', 'auto');
+          setAttr(cell, 'dir', 'auto');
         }
       }
     }
-    table.setAttribute(DONE, fp(t));
     return true;
   }
 
@@ -540,6 +554,11 @@ var inLtrIsland = surfaces.inLtrIsland;
     var block = el.closest ? el.closest(SELECTORS.block) : null;
     return block || el;
   }
+  // Attributes we apply that a React re-render can strip, undoing the RTL. We
+  // watch for their REMOVAL and re-apply (the "correct for a split second then
+  // reverts" bug). We react only to removals, never to our own additions, so
+  // there is no feedback loop.
+  var RTL_ATTRS = ['dir', 'data-rtl-col', 'data-rtl-litem', 'data-rtl-c', 'data-rtl-tdir', 'data-rtl-elic'];
   function makeObserver() {
     var obs = new MutationObserver(function (muts) {
       var touched = false;
@@ -550,6 +569,20 @@ var inLtrIsland = surfaces.inLtrIsland;
           if (r) {
             pending.add(r);
             touched = true;
+          }
+        } else if (m.type === 'attributes') {
+          // A React re-render removed/emptied one of our attributes -> re-apply.
+          // Ignore our own additions (oldValue null) so we never loop.
+          var cur = m.target.getAttribute ? m.target.getAttribute(m.attributeName) : null;
+          if (m.oldValue != null && (cur == null || cur === '')) {
+            // A cell's dir is applied by processTable, which runs at the TABLE
+            // level, so climb to the table; otherwise the element's own root.
+            var tbl = m.target.closest ? m.target.closest('table') : null;
+            var ra = tbl || nearestRoot(m.target);
+            if (ra) {
+              pending.add(ra);
+              touched = true;
+            }
           }
         } else {
           for (var j = 0; j < m.addedNodes.length; j++) {
@@ -572,6 +605,9 @@ var inLtrIsland = surfaces.inLtrIsland;
       childList: true,
       subtree: true,
       characterData: true,
+      attributes: true,
+      attributeOldValue: true,
+      attributeFilter: RTL_ATTRS,
     });
     return obs;
   }

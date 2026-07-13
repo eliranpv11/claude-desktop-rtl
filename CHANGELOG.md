@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.10] — 2026-07-13
+
+### Fixed
+- **RTL no longer reverts a split second after it applies.** A React re-render
+  (e.g. when re-opening a conversation) strips the `dir`/`data-rtl-*` attributes
+  we set, undoing the RTL — and because the observer only watched added nodes and
+  text, and `processTable` skipped re-work on an unchanged content fingerprint,
+  the fix was applied once and never re-applied, so it stayed reverted. Now the
+  MutationObserver also watches our attributes (`attributeFilter`) and re-applies
+  when one is **removed** by a re-render (it ignores our own writes, so there is
+  no loop), a stripped cell attribute re-runs `processTable` at the table level,
+  and `processTable` no longer short-circuits on the content fingerprint. All
+  attribute writes are now guarded (write only on change) to keep this free and
+  loop-safe. Verified in a real browser: after a simulated full attribute strip,
+  the table/cells self-heal within the settle window and then stay stable (no
+  flicker loop); all other surfaces unchanged.
+
 ## [0.4.9] — 2026-07-13
 
 ### Fixed
