@@ -39,7 +39,7 @@ Claude writes beautiful Hebrew — and then renders it **left-to-right**. Bullet
 - 🔒 **Zero network. Zero telemetry.** Nothing ever leaves your machine. Copy and Ctrl-F stay **byte-for-byte**: no invisible Unicode marks are injected, and arrows/operators are flipped *visually* while the underlying characters are untouched.
 - 🛡️ **Safe by construction.** Originals are backed up with a validated, atomic copy **before** anything changes, and **any failure triggers an automatic rollback**. One command restores everything.
 - 🧪 **A pure, tested core.** All bidi intelligence lives in a DOM-free engine with a torture-test corpus, decoupled from how it's delivered — and the CSS/DOM layer is verified in a real browser.
-- 🧱 **Resilient to Claude updates.** The layer targets prose *tags*, not Claude's class names, so a Claude redesign doesn't silently break it.
+- 🧱 **Resilient to Claude updates.** The layer targets prose *tags*, not Claude's class names, so a Claude redesign doesn't silently break it — and on Windows the watcher **pre-patches the staged update *before* it activates** (MSIX stages a new version hours before it goes live), so Hebrew comes back on its own the moment you apply the update: no restart, no click, no icon, and your running Claude is never force-closed.
 
 ---
 
@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File .\windows\patch.ps1              # inte
 
 **Requirements:** Windows 10/11, [Node.js](https://nodejs.org/) in `PATH` (used for `@electron/asar` + `@electron/fuses` via `npx`), and administrator rights for a Microsoft-Store (MSIX) install.
 
-**Flags:** `-Install` · `-Restore` · `-Status` · `-Verify` · `-Preflight` · `-Watch` · `-Unwatch` · `-CleanCerts`
+**Flags:** `-Install` · `-Restore` · `-Status` · `-Verify` · `-Preflight` · `-Watch` · `-Unwatch` · `-CleanCerts` · `-Repatch`
 
 > ⚠️ **Windows only** for the desktop app. 🍎 **macOS:** try [toboly's](https://github.com/toboly/claude-desktop-rtl-patch-mac) or [soguy's](https://github.com/soguy/claude-desktop-rtl-mac) mac patches *(not tested here; use at your own risk)*.
 

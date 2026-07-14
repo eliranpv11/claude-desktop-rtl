@@ -27,7 +27,8 @@ param(
     [switch]$Watch,
     [switch]$Unwatch,
     [switch]$CleanCerts,
-    [switch]$Auto
+    [switch]$Auto,
+    [switch]$Repatch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,7 +102,7 @@ function Find-ClaudeInstall {
         }
     }
 
-    # Squirrel (claude.ai installer) — newest app-* folder wins.
+    # Squirrel (claude.ai installer) -- newest app-* folder wins.
     $base = Join-Path $env:LOCALAPPDATA 'AnthropicClaude'
     if (Test-Path $base) {
         $appDir = Get-ChildItem -Path $base -Directory -Filter 'app-*' -ErrorAction SilentlyContinue |
@@ -122,6 +123,91 @@ function Find-ClaudeInstall {
         }
     }
     return $null
+}
+
+# --------------------------------------------------------------------------
+# Discover a STAGED (downloaded, not-yet-activated) MSIX update.
+#
+# MSIX "deferred registration": when Claude updates while running, Windows writes
+# the ENTIRE new version to a fresh WindowsApps\Claude_<newver>_..\ folder and DEFERS
+# activation until Claude next restarts -- often HOURS later (verified: ~3h gap on
+# this machine). During that window the new folder is complete and UNLOCKED (the old
+# version is what runs), so we can pre-patch it with zero disruption; the user then
+# restarts straight into an already-RTL build -- no kill, no icon, no click.
+#
+# Get-AppxPackage (per-user) reports only the ACTIVE version during this window, so
+# we discover the staged folder two ways and take the highest version strictly newer
+# than the active one. Returns a Claude-install-like object (Staged=$true) or $null.
+# --------------------------------------------------------------------------
+function Find-StagedClaudeUpdate([object]$Active) {
+    if (-not $Active -or $Active.Model -ne 'MSIX') { return $null }
+    $activeVer = try { [version]$Active.Version } catch { [version]'0.0.0.0' }
+    $family = if ($Active.Package) { $Active.Package.PackageFamilyName } else { 'Claude_pzs8sxrjxfjjc' }
+    $publisherId = ($family -split '_')[-1]
+
+    $cands = @()   # each: @{ Ver=[version]; Path=<install root> }
+
+    # Method 1: Get-AppxPackage -AllUsers (elevated) can surface STAGED packages that
+    # the plain per-user view hides during the deferred-registration window.
+    try {
+        Get-AppxPackage -AllUsers -Name 'Claude' -ErrorAction Stop | ForEach-Object {
+            $v = try { [version]$_.Version } catch { $null }
+            if ($v -and $_.InstallLocation -and (Test-Path $_.InstallLocation)) { $cands += @{ Ver = $v; Path = $_.InstallLocation } }
+        }
+    } catch { Write-WatchLog "staged-scan: AllUsers method unavailable ($(($_.Exception.Message -replace '\s+',' ').Trim()))." }
+
+    # Method 2: scan WindowsApps folders directly (ground truth: the folder is what
+    # will actually activate). Needs elevation to LIST the protected directory.
+    try {
+        $wa = Join-Path $env:ProgramFiles 'WindowsApps'
+        Get-ChildItem -LiteralPath $wa -Directory -Filter "Claude_*__$publisherId" -ErrorAction Stop | ForEach-Object {
+            if ($_.Name -match '^Claude_([0-9][0-9.]*)_') {
+                $v = try { [version]$matches[1] } catch { $null }
+                if ($v) { $cands += @{ Ver = $v; Path = $_.FullName } }
+            }
+        }
+    } catch { Write-WatchLog "staged-scan: WindowsApps listing unavailable ($(($_.Exception.Message -replace '\s+',' ').Trim()))." }
+
+    # Method 3 (most robust): read the AppX deployment log for a recently STAGED
+    # Claude package. The log is readable WITHOUT elevation, and it hands us the
+    # exact folder name -- so even when we cannot LIST WindowsApps we can access that
+    # one known child path directly (Test-Path a specific child works unprivileged;
+    # only listing the parent is blocked). This is what makes detection reliable.
+    try {
+        $seen = @{}
+        Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-AppXDeploymentServer/Operational'; StartTime = (Get-Date).AddDays(-3) } -ErrorAction Stop |
+            ForEach-Object {
+                foreach ($mm in [regex]::Matches($_.Message, "Claude_([0-9][0-9.]+)_[a-z0-9]+__$publisherId")) {
+                    $full = $mm.Value
+                    if (-not $seen.ContainsKey($full)) {
+                        $seen[$full] = $true
+                        $v = try { [version]$mm.Groups[1].Value } catch { $null }
+                        $path = Join-Path (Join-Path $env:ProgramFiles 'WindowsApps') $full
+                        if ($v -and (Test-Path $path)) { $cands += @{ Ver = $v; Path = $path } }
+                    }
+                }
+            }
+    } catch { Write-WatchLog "staged-scan: AppX log method unavailable ($(($_.Exception.Message -replace '\s+',' ').Trim()))." }
+
+    # Highest candidate strictly newer than the ACTIVE version = the staged update.
+    $top = $cands | Where-Object { $_.Ver -gt $activeVer } | Sort-Object { $_.Ver } -Descending | Select-Object -First 1
+    if (-not $top) { return $null }
+
+    $appDir = Join-Path $top.Path 'app'
+    if (-not (Test-Path $appDir)) { $appDir = $top.Path }
+    $asar = Join-Path $appDir 'resources\app.asar'
+    if (-not (Test-Path $asar)) { Write-WatchLog "staged-scan: v$($top.Ver) found but app.asar missing (incomplete stage); skipping this tick."; return $null }
+    return [pscustomobject]@{
+        Model     = 'MSIX'
+        Root      = $top.Path
+        AppDir    = $appDir
+        Asar      = $asar
+        Exe       = Join-Path $appDir 'claude.exe'
+        CoworkSvc = Join-Path $appDir 'resources\cowork-svc.exe'
+        Version   = "$($top.Ver)"
+        Package   = $null      # not yet registered; the -Staged path never launches it
+        Staged    = $true
+    }
 }
 
 # --------------------------------------------------------------------------
@@ -217,7 +303,7 @@ function Stop-ClaudeProcs([object]$Claude) {
         $belongs = $false
         if ($dir -and $path) { $belongs = $path.StartsWith($dir, [System.StringComparison]::OrdinalIgnoreCase) }
         if (-not $belongs -and $path) { $belongs = ($path -match 'WindowsApps\\Claude_|AnthropicClaude\\app-') }
-        # cowork-svc without a readable path is the guarded service — safe to stop mid-patch.
+        # cowork-svc without a readable path is the guarded service -- safe to stop mid-patch.
         if (-not $belongs -and $proc.Name -eq 'cowork-svc' -and -not $path) { $belongs = $true }
         if ($belongs) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
     }
@@ -227,7 +313,10 @@ function Stop-ClaudeProcs([object]$Claude) {
 # background service (needed to re-sign claude.exe) and NEVER force-kills the
 # Claude UI. We only ever reach the quiet re-patch when the UI is already closed
 # (files unlocked), so there is nothing visible to disturb -- no interruption.
-function Stop-ClaudeStack([object]$Claude, [switch]$NoStop) {
+function Stop-ClaudeStack([object]$Claude, [switch]$NoStop, [switch]$Staged) {
+    # Pre-patching a STAGED update: its files are not the ones running (the OLD
+    # version is), so we touch NOTHING -- not the UI, not the cowork service.
+    if ($Staged) { return }
     if (-not $NoStop) { Write-Step 'Halting Claude and cowork-svc...' }
     $svc = Get-CoworkService
     if ($svc) {
@@ -243,7 +332,10 @@ function Stop-ClaudeStack([object]$Claude, [switch]$NoStop) {
     Write-Ok 'Stopped.'
 }
 
-function Start-ClaudeStack([object]$Claude, [switch]$NoStop) {
+function Start-ClaudeStack([object]$Claude, [switch]$NoStop, [switch]$Staged) {
+    # Staged pre-patch never started anything, so there is nothing to restart and
+    # nothing to launch -- the user's running (old) Claude must stay untouched.
+    if ($Staged) { return }
     if (-not $NoStop) { Write-Step 'Restarting cowork-svc and launching Claude...' }
     $svc = Get-CoworkService
     if ($svc) {
@@ -398,7 +490,7 @@ function New-FittingCert([int]$HoleSize, [string]$Subject) {
     throw "No self-signed cert small enough for the $HoleSize-byte hole."
 }
 
-function Invoke-CertDance([object]$Claude, [switch]$NoStop) {
+function Invoke-CertDance([object]$Claude, [switch]$NoStop, [switch]$Staged) {
     if (-not (Test-Path $Claude.CoworkSvc)) { Write-Log 'No cowork-svc.exe; skipping cert dance.'; return }
     Write-Step 'Certificate swap + re-sign (cowork-svc guarded)...'
 
@@ -436,7 +528,11 @@ function Invoke-CertDance([object]$Claude, [switch]$NoStop) {
     # new one, so re-installs/updates never pile up fake "Anthropic, PBC" certs in
     # the trust store. Must run before New-FittingCert (the new cert shares the
     # FriendlyName, so cleaning after would delete the one we are about to use).
-    Remove-RtlCerts
+    # EXCEPTION -- staged pre-patch: the OLD version is still RUNNING and may be
+    # relying on its own RTL cert; purging it now would break its Cowork mid-session.
+    # We keep both certs during the (hours-long) window; the watcher purges the stale
+    # one once the new version activates (Remove-StaleCerts), converging back to one.
+    if (-not $Staged) { Remove-RtlCerts }
     $cert = New-FittingCert -HoleSize $holeSize -Subject $subject
     # Add a PUBLIC-ONLY copy to Trusted Root -- NEVER the key-bearing cert. Adding
     # the private-key cert makes LocalMachine\Root persist its own copy of the key,
@@ -451,7 +547,7 @@ function Invoke-CertDance([object]$Claude, [switch]$NoStop) {
 
     # Re-sign claude.exe (its bytes changed from inject + fuse-off).
     Wait-FileUnlock $Claude.Exe
-    Invoke-ReSign $Claude.Exe $cert -NoStop:$NoStop
+    Invoke-ReSign $Claude.Exe $cert -NoStop:($NoStop -or $Staged)
 
     # Swap cert bytes in cowork-svc.exe (zero-padded to preserve size), re-sign.
     $newCert = $cert.RawData
@@ -460,7 +556,7 @@ function Invoke-CertDance([object]$Claude, [switch]$NoStop) {
     [Array]::Copy($padded, 0, $svcBytes, $start, $holeSize)
     Wait-FileUnlock $Claude.CoworkSvc
     [System.IO.File]::WriteAllBytes($Claude.CoworkSvc, $svcBytes)
-    Invoke-ReSign $Claude.CoworkSvc $cert -NoStop:$NoStop
+    Invoke-ReSign $Claude.CoworkSvc $cert -NoStop:($NoStop -or $Staged)
     Write-Ok 'cowork-svc.exe cert replaced and re-signed.'
 
     # Wipe the private key; keep the public cert in Root for verification.
@@ -703,7 +799,7 @@ function Install-Watcher {
         -Settings $settings -Principal $principal `
         -Description 'Re-applies Claude RTL automatically after a Claude update.' -Force | Out-Null
 
-    # 3) Kick it once now so a pending update is fixed immediately, not in 5 min.
+    # 3) Kick it once now so a staged update is pre-patched immediately, not in 5 min.
     Start-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
     Write-Ok "Watcher '$script:TaskName' installed (silent; checks at logon + every 5 min)."
 }
@@ -712,6 +808,7 @@ function Uninstall-Watcher {
     $t = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
     if ($t) { Unregister-ScheduledTask -TaskName $script:TaskName -Confirm:$false; Write-Ok 'Watcher removed.' }
     else { Write-Log 'No watcher installed.' }
+    Clear-Toast
     if (Test-Path $script:AppHome) { Remove-Item $script:AppHome -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
@@ -736,63 +833,167 @@ function Clear-Fail {
     if (Test-Path $script:FailFile) { Remove-Item $script:FailFile -Force -ErrorAction SilentlyContinue }
 }
 
-# NON-INTERRUPTIVE auto re-patch for the scheduled task. The cardinal rule
+# --------------------------------------------------------------------------
+# Post-update notification (the safety net, no desktop icon).
+# The PRIMARY path re-applies RTL by pre-patching the STAGED update before it
+# activates (see Find-StagedClaudeUpdate + Invoke-AutoPatch) -- silent, no kill,
+# no icon, no click. This toast is only the FALLBACK: if we ever miss the staging
+# window and Claude ends up running an unpatched version, we tell the user (once
+# per version) that RTL will re-apply next time Claude is closed and reopened.
+# --------------------------------------------------------------------------
+$script:NoWatcherPrompt = $false
+$script:ToastFile  = Join-Path $script:StateDir 'toast-version.txt'
+
+function Clear-Toast {
+    if (Test-Path $script:ToastFile) { Remove-Item $script:ToastFile -Force -ErrorAction SilentlyContinue }
+}
+
+# Best-effort Windows toast. Sent under Claude's own registered AUMID so it reads
+# as a Claude notification; falls back to the always-registered PowerShell AUMID
+# so it still shows on any box, and never throws if the WinRT stack is missing --
+# the Desktop shortcut is the reliable channel, the toast is just the "now" cue.
+function Show-RtlToast([string]$Version) {
+    try {
+        $aumid = $null
+        $app = Get-AppxPackage | Where-Object { $_.Name -eq 'Claude' -or $_.Name -like '*AnthropicClaude*' } |
+            Select-Object -First 1
+        if ($app) {
+            try {
+                $mf = Get-AppxPackageManifest $app
+                $id = @($mf.Package.Applications.Application)[0].Id
+                if ($id) { $aumid = "$($app.PackageFamilyName)!$id" }
+            } catch {}
+        }
+        if (-not $aumid) { $aumid = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe' }
+
+        [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+        [void][Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime]
+        $tmpl  = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+        $texts = $tmpl.GetElementsByTagName('text')
+        $texts.Item(0).AppendChild($tmpl.CreateTextNode('Hebrew RTL will re-apply')) | Out-Null
+        $texts.Item(1).AppendChild($tmpl.CreateTextNode("Claude v$Version reset the Hebrew RTL patch. It re-applies automatically the next time Claude is fully closed and reopened.")) | Out-Null
+        $toast = [Windows.UI.Notifications.ToastNotification]::new($tmpl)
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($aumid).Show($toast)
+        Write-WatchLog "toast: notified user RTL missing (v$Version)."
+    } catch {
+        Write-WatchLog "toast unavailable: $($_.Exception.Message)"
+    }
+}
+
+# NON-INTERRUPTIVE auto re-patch for the scheduled watcher tick. Cardinal rule
 # (matching the mature reference watchers): NEVER force-kill a running Claude.
-# A Claude update reverts our RTL payload; we restore it, but ONLY at a moment
-# that does not interrupt the user:
-#   1. Read-only marker scan of app.asar -- does the app already have RTL? If so,
-#      do nothing (this never opens Claude for write, never stops anything).
-#   2. If RTL is missing, an update wiped it. If Claude is RUNNING the new version
-#      its files are locked -> DEFER and retry later; RTL re-applies the next time
-#      Claude is closed and reopened. We do not kill it out from under the user.
-#   3. If Claude is closed (files unlocked) -> patch QUIETLY (-NoStop): touch only
-#      the background service, never launch the UI. The user sees nothing; RTL is
-#      there next time they open Claude.
+# Order of preference, best UX first:
+#
+#   A) A STAGED update is waiting. MSIX "deferred registration" downloads the WHOLE
+#      new version to its own WindowsApps\Claude_<newver>\ folder but defers
+#      activation until Claude next restarts -- often hours away. We PRE-PATCH that
+#      staged folder while the old version keeps running, so when the user applies
+#      the update Claude boots straight into an already-RTL build: no kill, no icon,
+#      no click, no extra restart. This is the marquee path.
+#   B) The ACTIVE version is already patched -> nothing to do. Also prune any stale
+#      RTL cert left over from a just-activated pre-patch (converge back to one cert).
+#   C) Active is unpatched but Claude is RUNNING it (staging window missed, or the
+#      build was wiped): never force-kill. Notify once (no icon) that RTL re-applies
+#      on the next close, and wait.
+#   D) Active is unpatched and Claude is CLOSED -> quiet in-place re-patch.
 function Invoke-AutoPatch {
-    $claude = Find-ClaudeInstall
-    if (-not $claude) { Write-WatchLog 'auto: Claude not found'; return }
-    $ver = "$($claude.Version)"
+    $active = Find-ClaudeInstall
+    if (-not $active) { Write-WatchLog 'auto: Claude not found'; return }
+    $ver = "$($active.Version)"
 
-    # 1) Already patched? Read-only, non-blocking -- never touches Claude.
-    if (Test-AsarPatched $claude.Asar) { Clear-Fail; return }
-
-    # 2) Unpatched, but Claude is running the new version -> DEFER, never force-kill.
-    if ((Test-AsarLocked $claude.Asar) -or (Test-AsarLocked $claude.Exe)) {
-        Write-WatchLog "auto: v$ver RTL missing but Claude is running -> deferring (RTL re-applies after Claude is next closed)."
+    # A) Pre-patch a STAGED update before the user activates it (the marquee path).
+    $staged = Find-StagedClaudeUpdate $active
+    if ($staged) {
+        $sver = "$($staged.Version)"
+        if (Test-AsarPatched $staged.Asar) {
+            Write-WatchLog "auto: staged update v$sver already pre-patched; waiting for you to apply it."
+            return
+        }
+        if ((Test-AsarLocked $staged.Asar) -or (Test-AsarLocked $staged.Exe)) {
+            Write-WatchLog "auto: staged v$sver is locked (activating right now); will handle it as the active version next tick."
+            return
+        }
+        # Settle guard: never touch a folder MSIX may still be WRITING (mid-download,
+        # ~5 min). The staged folder then sits for hours, so losing one 5-min tick is
+        # free. Require the asar to have been stable for >2 min before patching.
+        try {
+            $asarAge = ((Get-Date) - (Get-Item $staged.Asar).LastWriteTime).TotalSeconds
+            if ($asarAge -lt 120) { Write-WatchLog "auto: staged v$sver still settling (asar last written $([int]$asarAge)s ago); waiting a tick."; return }
+        } catch {}
+        $fs = Get-Fail
+        if ($fs -and $fs.version -eq $sver -and [int]$fs.count -ge $script:MaxAttempts) {
+            $sinceHrs = try { ((Get-Date).ToUniversalTime() - [datetime]$fs.at).TotalHours } catch { 999 }
+            if ($sinceHrs -lt $script:CooldownHrs) { Write-WatchLog "auto: staged v$sver in back-off; skipping."; return }
+        }
+        Write-WatchLog "auto: STAGED update v$sver detected (active is v$ver) -> pre-patching it now; the running v$ver stays untouched..."
+        try {
+            Install-Patch $staged -Staged
+            Clear-Fail
+            Write-WatchLog "auto: staged pre-patch v$sver OK; RTL is ready for the instant you apply the update."
+        } catch {
+            if ($_.Exception.Message -like '*another patch is in progress*') { Write-WatchLog 'auto: staged pre-patch deferred (another patch is running).' }
+            else { Set-Fail $sver; Write-WatchLog "auto: staged pre-patch v$sver failed: $($_.Exception.Message)" }
+        }
         return
     }
 
-    # Back-off on a genuinely unpatchable version so we don't retry the (now quiet,
-    # UI-safe) patch forever. Resets when a newer version arrives.
+    # B) Active already patched? Nothing to do. Converge the cert store back to ONE
+    #    cert (a just-activated pre-patch can leave the old version's cert behind).
+    if (Test-AsarPatched $active.Asar) {
+        Clear-Fail; Clear-Toast
+        try {
+            if ((Get-RtlCertCount) -gt 1) {
+                $keep = (Get-AuthenticodeSignature $active.Exe).SignerCertificate.Thumbprint
+                if ($keep) { Remove-RtlCerts $keep; Write-WatchLog 'auto: pruned stale RTL cert(s) after activation; kept the active signer.' }
+            }
+        } catch {}
+        return
+    }
+
+    # C) Active unpatched but Claude is RUNNING it -> never force-kill. Notify once
+    #    (no icon); RTL re-applies quietly the next time Claude is closed (case D).
+    if ((Test-AsarLocked $active.Asar) -or (Test-AsarLocked $active.Exe)) {
+        $toasted = ''
+        if (Test-Path $script:ToastFile) { try { $toasted = (Get-Content $script:ToastFile -Raw).Trim() } catch {} }
+        if ($toasted -ne $ver) {
+            Show-RtlToast $ver
+            Set-Content -Path $script:ToastFile -Value $ver -Encoding ASCII
+        }
+        Write-WatchLog "auto: v$ver RTL missing + Claude running (staging window missed) -> notified; RTL re-applies on next close. No forced restart."
+        return
+    }
+
+    # Back-off on a genuinely unpatchable active version.
     $fail = Get-Fail
     if ($fail -and $fail.version -eq $ver -and [int]$fail.count -ge $script:MaxAttempts) {
         $sinceHrs = try { ((Get-Date).ToUniversalTime() - [datetime]$fail.at).TotalHours } catch { 999 }
         if ($sinceHrs -lt $script:CooldownHrs) { return }
     }
 
-    # 3) Unpatched AND Claude closed -> quiet re-patch (no UI kill, no UI launch).
+    # D) Active unpatched AND Claude closed -> quiet in-place re-patch.
     Write-WatchLog "auto: v$ver RTL missing + Claude closed -> quiet re-patch..."
     try {
-        Install-Patch $claude -NoStop
-        Clear-Fail
+        Install-Patch $active -NoStop
+        Clear-Fail; Clear-Toast
         Write-WatchLog "auto: quiet re-patch OK (v$ver); RTL applies on next Claude launch."
     } catch {
-        # A lock contention (a manual install is running) is a DEFER, not a
-        # failure -- don't count it toward the back-off.
-        if ($_.Exception.Message -like '*another patch is in progress*') {
-            Write-WatchLog 'auto: deferred (another patch operation is running).'
-        } else {
-            Set-Fail $ver
-            Write-WatchLog "auto: quiet re-patch failed: $($_.Exception.Message)"
-        }
+        if ($_.Exception.Message -like '*another patch is in progress*') { Write-WatchLog 'auto: deferred (another patch operation is running).' }
+        else { Set-Fail $ver; Write-WatchLog "auto: quiet re-patch failed: $($_.Exception.Message)" }
     }
 }
 
 # --------------------------------------------------------------------------
 # Install (atomic, rollback on any failure)
 # --------------------------------------------------------------------------
-function Install-Patch([object]$Claude, [switch]$NoStop) {
-    if (-not $NoStop) { Write-Host "`n=== Installing Claude RTL ($($Claude.Model)) ===" -ForegroundColor Cyan }
+function Install-Patch([object]$Claude, [switch]$NoStop, [switch]$Staged) {
+    # $Staged: pre-patch a downloaded-but-not-activated update folder (the OLD
+    # version keeps running). It behaves like the quiet watcher path -- $quiet
+    # gates every "interactive only" branch -- but additionally touches NO running
+    # process/service (Stop/Start-ClaudeStack + cert-dance get -Staged) and does
+    # NOT purge the running version's cert.
+    $quiet = $NoStop -or $Staged
+    if (-not $quiet) { Write-Host "`n=== Installing Claude RTL ($($Claude.Model)) ===" -ForegroundColor Cyan }
+    if ($Staged) { Write-WatchLog "staged: pre-patching v$($Claude.Version) at $($Claude.AppDir) (old version keeps running)." }
     if (-not (Test-Path $script:PayloadJs)) { throw "payload not built: $script:PayloadJs (run npm run build first)" }
     if (-not (Test-NodeTooling)) { throw 'Node.js is required (asar/fuses).' }
 
@@ -806,19 +1007,20 @@ function Install-Patch([object]$Claude, [switch]$NoStop) {
     $owned = $false
     try { $owned = $mtx.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
     if (-not $owned) {
-        if ($NoStop) { $mtx.Dispose(); throw 'another patch is in progress; deferring quiet re-patch.' }
+        if ($quiet) { $mtx.Dispose(); throw 'another patch is in progress; deferring quiet re-patch.' }
         Write-Warn2 'Another patch is already running; waiting for it to finish...'
         try { $owned = $mtx.WaitOne(180000) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
         if (-not $owned) { $mtx.Dispose(); throw 'timed out waiting for the other patch to finish.' }
     }
     try {
     # Under the lock, another run may have just applied RTL -- do not undo it.
-    if ($NoStop -and (Test-AsarPatched $Claude.Asar)) { return }
+    if ($quiet -and (Test-AsarPatched $Claude.Asar)) { return }
     # Pause the watcher task so a scheduled tick cannot collide with this install.
-    if (-not $NoStop) { Disable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null }
+    # (Staged runs FROM the watcher, so it must not disable its own task.)
+    if (-not $quiet) { Disable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null }
 
-    Stop-ClaudeStack $Claude -NoStop:$NoStop
-    if ($Claude.Model -eq 'MSIX') { if (-not $NoStop) { Write-Step 'Taking ownership...' }; Grant-Write $Claude.AppDir }
+    Stop-ClaudeStack $Claude -NoStop:$NoStop -Staged:$Staged
+    if ($Claude.Model -eq 'MSIX') { if (-not $quiet) { Write-Step 'Taking ownership...' }; Grant-Write $Claude.AppDir }
 
     Backup-Originals $Claude
     # Always start from clean originals so re-runs patch pristine files.
@@ -840,23 +1042,24 @@ function Install-Patch([object]$Claude, [switch]$NoStop) {
         Move-Item $newAsar $Claude.Asar -Force
         Write-Ok 'app.asar patched.'
 
-        if (-not $NoStop) { Write-Step 'Phase 2: disable ASAR-integrity fuse on claude.exe' }
+        if (-not $quiet) { Write-Step 'Phase 2: disable ASAR-integrity fuse on claude.exe' }
         # Phase 1 (extract/inject/pack) is slow; a claude.exe can respawn and
         # re-lock the binary mid-way. In interactive mode we re-kill THIS install's
-        # processes and wait for the handle to release. In QUIET (-NoStop) mode we
+        # processes and wait for the handle to release. In QUIET/STAGED mode we
         # NEVER kill: if the exe becomes locked (the user opened Claude during the
-        # patch) we abort and let the next tick retry once Claude is closed again.
+        # patch, or -- for staged -- activated the update) we abort and let the next
+        # tick retry. A staged folder's exe is not running, so it stays unlocked.
         $fuseOk = $false
         for ($i = 1; $i -le 8; $i++) {
-            if (-not $NoStop) {
+            if (-not $quiet) {
                 Stop-ClaudeProcs $Claude
                 try { Wait-FileUnlock $Claude.Exe 10 }
                 catch { Write-Warn2 "claude.exe still locked (attempt $i); retrying..."; Start-Sleep -Seconds 2; continue }
             } elseif (Test-AsarLocked $Claude.Exe) {
-                throw 'claude.exe became locked during quiet re-patch (Claude was opened); will retry when it is next closed.'
+                throw 'claude.exe became locked during quiet re-patch (Claude was opened, or the staged update just activated); will retry when it is next closed.'
             }
             if ((Invoke-Fuses @('write', '--app', "`"$($Claude.Exe)`"", 'EnableEmbeddedAsarIntegrityValidation=off')) -eq 0) { $fuseOk = $true; break }
-            if (-not $NoStop) { Write-Warn2 "fuse write attempt $i failed; retrying..." }
+            if (-not $quiet) { Write-Warn2 "fuse write attempt $i failed; retrying..." }
             Start-Sleep -Seconds 2
         }
         if (-not $fuseOk) {
@@ -865,28 +1068,38 @@ function Install-Patch([object]$Claude, [switch]$NoStop) {
         }
         Write-Ok 'ASAR-integrity fuse disabled.'
 
-        if (-not $NoStop) { Write-Step 'Phase 3: certificate sync' }
-        Invoke-CertDance $Claude -NoStop:$NoStop
+        if (-not $quiet) { Write-Step 'Phase 3: certificate sync' }
+        Invoke-CertDance $Claude -NoStop:$NoStop -Staged:$Staged
 
         Save-State $Claude
-        Start-ClaudeStack $Claude -NoStop:$NoStop
-        if (-not $NoStop) { Write-Host "`n=== RTL INSTALLED SUCCESSFULLY ===`n" -ForegroundColor Green }
+        Start-ClaudeStack $Claude -NoStop:$NoStop -Staged:$Staged
+        if (-not $quiet) { Write-Host "`n=== RTL INSTALLED SUCCESSFULLY ===`n" -ForegroundColor Green }
+        if ($Staged) { Write-WatchLog "staged: pre-patch of v$($Claude.Version) COMPLETE; RTL will be live the instant Claude restarts into it (no kill, no click)." }
 
-        if (-not $Auto -and -not $NoStop) {
+        if (-not $Auto -and -not $quiet -and -not $script:NoWatcherPrompt) {
             $ans = Read-Host 'Enable auto re-patch after Claude updates? (Y/n)'
             if ($ans -ne 'n' -and $ans -ne 'N') { Install-Watcher }
         }
     } catch {
-        if (-not $NoStop) { Write-Err "Install failed: $($_.Exception.Message)"; Write-Warn2 'Rolling back to originals...' }
+        if (-not $quiet) { Write-Err "Install failed: $($_.Exception.Message)"; Write-Warn2 'Rolling back to originals...' }
+        if ($Staged) { Write-WatchLog "staged: pre-patch FAILED ($($_.Exception.Message)); rolling the staged folder back to pristine so it still launches cleanly." }
         Restore-FromBackups $Claude -Rollback | Out-Null
-        Remove-RtlCerts
-        Start-ClaudeStack $Claude -NoStop:$NoStop
+        if ($Staged) {
+            # NEVER purge the RUNNING (old) version's cert -- it is still in use. Keep
+            # that thumbprint; purge only our orphaned staged mint (its key IS wiped).
+            $keep = ''
+            try { $a = Find-ClaudeInstall; if ($a -and (Test-Path $a.Exe)) { $keep = (Get-AuthenticodeSignature $a.Exe).SignerCertificate.Thumbprint } } catch {}
+            Remove-RtlCerts $keep
+        } else {
+            Remove-RtlCerts
+        }
+        Start-ClaudeStack $Claude -NoStop:$NoStop -Staged:$Staged
         throw "Installation failed and was rolled back. See messages above."
     } finally {
         if (Test-Path $work) { Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue }
     }
     } finally {
-        if (-not $NoStop) { Enable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null }
+        if (-not $quiet) { Enable-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue | Out-Null }
         try { $mtx.ReleaseMutex() } catch {}
         $mtx.Dispose()
     }
@@ -985,6 +1198,17 @@ if ($Verify)    { Test-Verify | Out-Null; return }
 if ($Unwatch)   { Uninstall-Watcher; return }
 if ($Watch)     { Install-Watcher; return }
 if ($Auto)      { Invoke-AutoPatch; return }   # headless watcher tick: gated, silent
+if ($Repatch) {
+    # User clicked the "Restore Hebrew RTL" shortcut after applying a Claude update.
+    # This is the ONE place a restart is user-initiated -> full patch (not -NoStop).
+    $claude = Find-ClaudeInstall
+    if (-not $claude) { Write-Err 'Claude Desktop not found.'; return }
+    if ($claude.Model -eq 'MSIX' -and -not (Test-Admin)) { Invoke-Elevate -PassArgs @('-Repatch') }
+    $script:NoWatcherPrompt = $true
+    Write-Host "`n=== Restoring Hebrew RTL after a Claude update ===`n" -ForegroundColor Cyan
+    try { Install-Patch $claude; Install-Watcher } catch { Write-Err $_.Exception.Message }
+    return
+}
 if ($Restore)   { Invoke-Action -DoRestore; return }
 if ($Install)   { Invoke-Action -DoInstall; return }
 

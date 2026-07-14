@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-14
+
+### Added
+- **RTL now re-applies after a Claude update with no force-kill, no icon, and no
+  click — by pre-patching the STAGED update before it activates.** MSIX delivers a
+  Claude update via "deferred registration": the entire new version is written to a
+  fresh `WindowsApps\Claude_<newver>\` folder and activation is deferred until Claude
+  next restarts — often hours later (verified ~3h on a real machine). During that
+  window the new folder is complete and **unlocked** (the old version is what runs),
+  so the watcher pre-patches it in place while the running Claude is left completely
+  untouched. When the user later applies the update, Claude boots straight into an
+  already-RTL build. This is the always-on-machine answer that plain "re-apply on
+  next close" never solved, and it is done without ever killing a running Claude.
+- **`Find-StagedClaudeUpdate`** discovers the staged version three ways for
+  robustness: `Get-AppxPackage -AllUsers`, a direct `WindowsApps` folder scan, and —
+  most reliably — reading the `AppXDeploymentServer/Operational` event log (readable
+  without elevation, and it names the exact folder so we can reach that one known
+  path even when listing the protected directory is blocked).
+- **`Install-Patch -Staged`** patches a downloaded-but-not-yet-activated folder: it
+  touches no running process or service (Stop/Start-ClaudeStack and the cert-dance
+  are `-Staged`-aware), and it does not purge the running version's code-signing
+  cert. A settle guard skips a folder MSIX may still be writing; any failure rolls
+  the staged folder back to pristine so it still launches cleanly (just without RTL).
+
+### Changed
+- The auto-watcher's tick order is now: (A) pre-patch a staged update, (B) if the
+  active build is already patched do nothing and converge the cert store back to
+  **one** cert, (C) if the active build is unpatched but running, notify once and
+  wait (never force-kill), (D) if it is closed, quiet in-place re-patch.
+
+### Removed
+- The Desktop "Restore Claude Hebrew RTL" shortcut. The staging pre-patch makes a
+  manual restore button unnecessary; the toast remains only as a fallback notice for
+  the rare case the staging window is missed.
+
 ## [0.4.11] — 2026-07-13
 
 ### Fixed
