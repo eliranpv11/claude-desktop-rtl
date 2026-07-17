@@ -31,6 +31,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cert. A settle guard skips a folder MSIX may still be writing; any failure rolls
   the staged folder back to pristine so it still launches cleanly (just without RTL).
 
+- **Event-driven trigger** so a staged update is caught in ~1-2s, not up to 5 min
+  later. The watcher now also fires on `AppXDeploymentServer/Operational` EventID
+  658 (deferred-registration) + 400 (Add/Register finished) via a CIM
+  `MSFT_TaskEventTrigger`, alongside the logon + 5-min backstops. The MSIX
+  stage->activate gap has no OS timeout and can be a few seconds, so a poll alone
+  is guaranteed to miss the fast path.
+
+### Fixed
+- **The staged pre-patch actually lands now** (verified end-to-end on a real update:
+  1.21459.3.0 -> 1.22209.0.0 pre-patched while running, RTL live the instant the
+  user applied the update, cert store converged to one, Cowork intact). The blocker
+  was `Test-AsarLocked`: it opened the file for **ReadWrite**, which a fresh staged
+  folder's ACL denies *before* `Grant-Write`, so an unlocked-but-not-yet-owned staged
+  folder was misreported as "locked (activating)" and every pre-patch bailed. It now
+  opens **Read-exclusive** (read is ACL-allowed on WindowsApps, so a failure is a
+  genuine sharing violation, not an ACL artifact) and treats `UnauthorizedAccess` as
+  not-locked. The `app.asar` is the reliable "is it running" signal; a running
+  `claude.exe` keeps no conflicting handle, so callers key on the asar.
+
 ### Changed
 - The auto-watcher's tick order is now: (A) pre-patch a staged update, (B) if the
   active build is already patched do nothing and converge the cert store back to

@@ -353,12 +353,22 @@ function Start-ClaudeStack([object]$Claude, [switch]$NoStop, [switch]$Staged) {
     } catch { Write-Warn2 "Launch Claude manually. ($($_.Exception.Message))" }
 }
 
-# Non-destructive lock test: try an exclusive open (open+close, writes nothing).
-# If Claude is running THIS install the file is held -> throws -> locked.
+# Non-destructive lock test: try an exclusive READ open (open+close, writes nothing).
+# READ is ACL-allowed on WindowsApps even before takeown, so a failure here is a
+# GENUINE sharing violation (another process -- the running Claude, or an in-progress
+# activation -- holds the file), NOT an ACL artifact. This is the fix for the bug
+# that made every staged pre-patch bail: the old test opened for ReadWrite, which a
+# fresh staged folder's ACL denies BEFORE Grant-Write, so an unlocked-but-not-yet-
+# owned staged folder was misreported as "locked (activating)". An UnauthorizedAccess
+# (pure ACL) is therefore NOT a lock -- Grant-Write resolves it. The app.asar is the
+# reliable signal: a running Claude holds it; a running claude.exe does NOT keep a
+# conflicting handle (the loader closes it after mapping the image), so callers key on
+# the asar, never the exe, to decide "is this version running?".
 function Test-AsarLocked([string]$Path) {
     if (-not (Test-Path $Path)) { return $false }
-    try { $fs = [System.IO.File]::Open($Path, 'Open', 'ReadWrite', 'None'); $fs.Close(); return $false }
-    catch { return $true }
+    try { $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'None'); $fs.Close(); return $false }
+    catch [System.UnauthorizedAccessException] { return $false }   # ACL only; takeown fixes it
+    catch { return $true }                                          # sharing violation = held by a process
 }
 
 function Grant-Write([string]$Path) {
@@ -777,14 +787,32 @@ function Install-Watcher {
     $vbs = Copy-Runtime
     Write-Ok "Runtime staged at $script:AppHome"
 
-    # 2) Two triggers so an update is caught BOTH at logon AND mid-session:
+    # 2) Triggers so an update is caught the instant it stages AND as backstops:
+    #    - EVENT (primary): AppXDeploymentServer/Operational 658 fires the moment
+    #      Windows stages a new version while the app is running ("deferred
+    #      registration"); 400 (Add/Register finished) backstops it. The MSIX
+    #      stage->activate gap has no OS timeout and can be a few SECONDS, so a
+    #      5-min poll is guaranteed to miss the fast path -- this reacts in ~1-2s.
     #    - AtLogOn: covers updates applied while signed out / across reboots.
-    #    - a 5-minute repetition: covers updates applied while you are working
-    #      (the old logon-only trigger never fired for those -- the actual bug).
+    #    - 5-minute repetition: self-healing backstop for any missed event.
     $t1 = New-ScheduledTaskTrigger -AtLogOn
     $t2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
             -RepetitionInterval (New-TimeSpan -Minutes 5) `
             -RepetitionDuration (New-TimeSpan -Days 3650)
+
+    # New-ScheduledTaskTrigger has no event-trigger option, so build one via CIM.
+    # EventID-only XPath is the practical selector (XPath cannot match the rendered
+    # "Claude" message text); 658 is rare and the idempotent -Auto tick self-confirms
+    # it is Claude, so a spurious fire from another app's update is a harmless no-op.
+    $evtTrigger = $null
+    try {
+        $subXml = '<QueryList><Query Id="0" Path="Microsoft-Windows-AppXDeploymentServer/Operational"><Select Path="Microsoft-Windows-AppXDeploymentServer/Operational">*[System[(EventID=658 or EventID=400)]]</Select></Query></QueryList>'
+        $cls = Get-CimClass -Namespace 'Root/Microsoft/Windows/TaskScheduler' -ClassName 'MSFT_TaskEventTrigger' -ErrorAction Stop
+        $evtTrigger = New-CimInstance -CimClass $cls -ClientOnly
+        $evtTrigger.Enabled = $true
+        $evtTrigger.Subscription = $subXml
+    } catch { Write-Warn2 "Event trigger unavailable ($(($_.Exception.Message -replace '\s+',' ').Trim())); using logon + 5-min poll only." }
+    $triggers = if ($evtTrigger) { @($t1, $t2, $evtTrigger) } else { @($t1, $t2) }
 
     # Run the hidden VBS launcher (via wscript) instead of powershell directly, so
     # the recurring tick never flashes a console window. wscript has no window and
@@ -795,13 +823,14 @@ function Install-Watcher {
     $principal = New-ScheduledTaskPrincipal -UserId (Get-InteractiveUser) `
         -RunLevel Highest -LogonType Interactive
 
-    Register-ScheduledTask -TaskName $script:TaskName -Action $action -Trigger $t1, $t2 `
+    Register-ScheduledTask -TaskName $script:TaskName -Action $action -Trigger $triggers `
         -Settings $settings -Principal $principal `
         -Description 'Re-applies Claude RTL automatically after a Claude update.' -Force | Out-Null
 
     # 3) Kick it once now so a staged update is pre-patched immediately, not in 5 min.
     Start-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
-    Write-Ok "Watcher '$script:TaskName' installed (silent; checks at logon + every 5 min)."
+    $trigDesc = if ($evtTrigger) { 'on the AppX stage event + at logon + every 5 min' } else { 'at logon + every 5 min' }
+    Write-Ok "Watcher '$script:TaskName' installed (silent; fires $trigDesc)."
 }
 
 function Uninstall-Watcher {
@@ -909,8 +938,12 @@ function Invoke-AutoPatch {
             Write-WatchLog "auto: staged update v$sver already pre-patched; waiting for you to apply it."
             return
         }
-        if ((Test-AsarLocked $staged.Asar) -or (Test-AsarLocked $staged.Exe)) {
-            Write-WatchLog "auto: staged v$sver is locked (activating right now); will handle it as the active version next tick."
+        # Key on the app.asar only: a running Claude holds it, but a fresh staged
+        # folder does NOT (verified). The exe is not a reliable signal (a running
+        # claude.exe keeps no conflicting handle). A lock here means activation is
+        # genuinely in progress -- handle it as the active version next tick.
+        if (Test-AsarLocked $staged.Asar) {
+            Write-WatchLog "auto: staged v$sver app.asar is held (activation in progress); will handle it as the active version next tick."
             return
         }
         # Settle guard: never touch a folder MSIX may still be WRITING (mid-download,
@@ -952,7 +985,7 @@ function Invoke-AutoPatch {
 
     # C) Active unpatched but Claude is RUNNING it -> never force-kill. Notify once
     #    (no icon); RTL re-applies quietly the next time Claude is closed (case D).
-    if ((Test-AsarLocked $active.Asar) -or (Test-AsarLocked $active.Exe)) {
+    if (Test-AsarLocked $active.Asar) {
         $toasted = ''
         if (Test-Path $script:ToastFile) { try { $toasted = (Get-Content $script:ToastFile -Raw).Trim() } catch {} }
         if ($toasted -ne $ver) {
@@ -1046,17 +1079,17 @@ function Install-Patch([object]$Claude, [switch]$NoStop, [switch]$Staged) {
         # Phase 1 (extract/inject/pack) is slow; a claude.exe can respawn and
         # re-lock the binary mid-way. In interactive mode we re-kill THIS install's
         # processes and wait for the handle to release. In QUIET/STAGED mode we
-        # NEVER kill: if the exe becomes locked (the user opened Claude during the
-        # patch, or -- for staged -- activated the update) we abort and let the next
-        # tick retry. A staged folder's exe is not running, so it stays unlocked.
+        # NEVER kill: if the app.asar becomes held (the user opened Claude during the
+        # patch, or -- for staged -- the update activated) we abort and let the next
+        # tick retry. A staged folder's asar is not held, so the patch proceeds.
         $fuseOk = $false
         for ($i = 1; $i -le 8; $i++) {
             if (-not $quiet) {
                 Stop-ClaudeProcs $Claude
                 try { Wait-FileUnlock $Claude.Exe 10 }
                 catch { Write-Warn2 "claude.exe still locked (attempt $i); retrying..."; Start-Sleep -Seconds 2; continue }
-            } elseif (Test-AsarLocked $Claude.Exe) {
-                throw 'claude.exe became locked during quiet re-patch (Claude was opened, or the staged update just activated); will retry when it is next closed.'
+            } elseif (Test-AsarLocked $Claude.Asar) {
+                throw 'app.asar became held mid-patch (Claude was opened, or the staged update activated); aborting so a partial patch never ships -- will retry when it is next unlocked.'
             }
             if ((Invoke-Fuses @('write', '--app', "`"$($Claude.Exe)`"", 'EnableEmbeddedAsarIntegrityValidation=off')) -eq 0) { $fuseOk = $true; break }
             if (-not $quiet) { Write-Warn2 "fuse write attempt $i failed; retrying..." }
