@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-17
+
+### Added
+- **Hebrew/Arabic RTL now also flips the chat inside Claude Design.** The sidebar
+  "Claude Design" surface is a bare Electron `BrowserWindow` that loads a **remote
+  claude.ai** page with **no preload**, so none of our renderer bundles ran in it —
+  which is why its chat stayed LTR. `inject.mjs` now gives that one window **our own
+  preload** (`rtlDesignPreload.js`, which is the RTL payload verbatim) via a
+  **fail-soft**, string-anchored edit (keyed to the stable
+  `setDesignWindowNavigationHandlers` literal, never a minified identifier). The
+  preload runs main-frame-only, so it flips the **chat** while leaving the
+  cross-origin design-canvas **artwork** iframe untouched. A missed anchor on a
+  future build degrades to "no RTL in Design", never a broken install. Verified live
+  in the real app: the Design chat reads right-to-left.
+
+### Fixed
+- **The staged pre-patch now actually lands (0.5.0 shipped it, but a lock-test bug
+  made it bail every time).** `Test-AsarLocked` opened the file for **ReadWrite**,
+  which a freshly-staged `WindowsApps` folder's ACL denies **before** `Grant-Write`
+  takes ownership — so an unlocked-but-not-yet-owned staged folder was misreported as
+  "locked (activating)" and skipped. It now opens **read-exclusive** (read is
+  ACL-allowed), so a failure is a genuine sharing violation (a running process) and a
+  pure ACL denial is correctly treated as *not* locked. Verified end-to-end: update
+  `1.22209.0.0` was pre-patched while the old version kept running, and RTL (chat
+  **and** Design) was live the instant the update was applied — no kill, no click.
+
+### Changed
+- **The watcher now also fires on an event trigger, not just a 5-minute poll.** A
+  `MSFT_TaskEventTrigger` on `AppXDeploymentServer/Operational` (EventID 658 +
+  400) fires `patch.ps1 -Auto` within ~1–2s of a new version being staged. This
+  corrects the 0.5.0 assumption that the staging window is hours long: it is
+  **incidental** — as short as **~4 seconds** on an awake machine (the "~3h" seen
+  once was almost entirely Modern Standby sleep) — so a 5-minute poll can miss it.
+  The poll + logon triggers remain as self-healing backstops.
+
 ## [0.5.0] — 2026-07-14
+
+> Correction (see 0.6.0): the staging window is **incidental, not structural** —
+> often only seconds on an awake machine, not the hours implied below. The 0.6.0
+> event trigger + read-exclusive lock-test are what make the pre-patch reliable.
 
 ### Added
 - **RTL now re-applies after a Claude update with no force-kill, no icon, and no

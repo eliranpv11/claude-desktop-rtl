@@ -22,6 +22,21 @@ const MAIN_SWITCH =
   ";(function(){try{var e=require('electron');e&&e.app&&e.app.commandLine&&" +
   "e.app.commandLine.appendSwitch('force-ui-direction','ltr');}catch(_){}})();\n";
 
+// The sidebar "Claude Design" surface is a bare BrowserWindow that loads a REMOTE
+// claude.ai page with NO preload, so none of our renderer bundles run in it -> no
+// RTL there. We give that one window OUR preload (= the RTL payload) so its chat
+// flips. It is main-frame-only (no nodeIntegrationInSubFrames), so the cross-origin
+// design-canvas artwork iframe is left untouched -- exactly "chat, not the canvas".
+const DESIGN_PRELOAD_FILE = 'rtlDesignPreload.js';
+// Robust locator: the STABLE string literal in the Design-window builder (never a
+// minified identifier, which rotates every build). The window's webPreferences sits
+// just before it.
+const DESIGN_MARKER = 'setDesignWindowNavigationHandlers';
+const DESIGN_WEBPREFS = 'webPreferences:{sandbox:!0,contextIsolation:!0,nodeIntegration:!1}';
+const DESIGN_PRELOAD_INSERT =
+  ',preload:require("path").join(require("electron").app.getAppPath(),".vite/build/' +
+  DESIGN_PRELOAD_FILE + '")';
+
 function die(msg) {
   process.stderr.write('inject.mjs: ' + msg + '\n');
   process.exit(2);
@@ -39,6 +54,33 @@ function listJs(dir) {
   };
   walk(dir);
   return out;
+}
+
+// Second pass: inject OUR preload into the sidebar Claude Design window.
+// FAIL-SOFT by contract (the deliberate opposite of the .vite/build fail-loud rule):
+// a missed anchor on a future Claude build degrades to "no RTL in the Design window"
+// and NEVER blocks or breaks the main RTL install.
+function patchDesignWindow(buildDir, payload) {
+  for (const file of listJs(buildDir)) {
+    let src = fs.readFileSync(file, 'utf8');
+    const marker = src.indexOf(DESIGN_MARKER);
+    if (marker < 0) continue;                       // not the Design chunk
+    if (src.indexOf('.vite/build/' + DESIGN_PRELOAD_FILE) >= 0) return 1;  // already done (idempotent)
+    // The Design window's webPreferences is the LAST one just before the marker.
+    const wp = src.lastIndexOf(DESIGN_WEBPREFS, marker);
+    if (wp < 0 || marker - wp > 800) {
+      process.stderr.write('inject.mjs: Design webPreferences not found near marker; Design RTL skipped (fail-soft).\n');
+      return 0;
+    }
+    const patched = src.slice(0, wp) +
+      DESIGN_WEBPREFS.slice(0, -1) + DESIGN_PRELOAD_INSERT + '}' +
+      src.slice(wp + DESIGN_WEBPREFS.length);
+    fs.writeFileSync(file, patched);
+    fs.writeFileSync(path.join(buildDir, DESIGN_PRELOAD_FILE), payload);  // ship the preload
+    return 1;
+  }
+  process.stderr.write('inject.mjs: Claude Design window marker not found; Design RTL skipped (fail-soft).\n');
+  return 0;
 }
 
 function main() {
@@ -103,8 +145,12 @@ function main() {
     die('nothing was processed — aborting.');
   }
 
+  // Second, fail-soft pass: give the sidebar Design window our preload.
+  const designPreload = patchDesignWindow(buildDir, payload);
+
   process.stdout.write(
-    'inject.mjs: renderer=' + injected + ' main=' + mainPatched + ' skipped=' + skipped + '\n'
+    'inject.mjs: renderer=' + injected + ' main=' + mainPatched +
+    ' skipped=' + skipped + ' design=' + designPreload + '\n'
   );
   process.exit(0);
 }
